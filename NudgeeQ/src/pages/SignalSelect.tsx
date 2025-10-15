@@ -1,56 +1,53 @@
+// NudgeeQ/src/pages/SignalSelect.tsx
 import { useMemo, useRef, useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 
 type SignalSide = "left" | "right";
 type SignalItem = { id: string; text: string; x: number; y: number; side: SignalSide };
 
-export default function SignalSelect({
-  avatarSrc,
-  onBack,            // 左上角返回
-  onDone,            // 顶部右侧 Done
-}: {
-  avatarSrc: string; // 例如 "/avatars/white-smile.png"（来自 public/avatars）
-  onBack: () => void;
-  onDone: (signals: SignalItem[]) => void;
-}) {
-  // 预置 signal（按三列分组，决定左右默认落点）
-  const presets = useMemo(() => ({
-    left: [
-      "I have pen",
-      "I have Type-C cable",
-      "I have Lightning cable",
-      "You can borrow my calculator",
-      "I have MacBook charger",
-    ],
-    center: [
-      "Feel free to seat here",
-      "I am waiting for my friend",
-      "Prefer to seat alone",
-    ],
-    right: [
-      "Looking for study buddy",
-      "Low energy, please be gentle",
-      "Here if you need anytime",
-    ],
-  }), []);
+export default function SignalSelect() {
+  const nav = useNavigate();
+  const { state } = useLocation() as {
+    state?: { tableId?: string; seatId?: string; avatarSrc?: string };
+  };
 
-  // 已添加的气泡
+  const tableId = state?.tableId ?? "1";
+  const seatId = state?.seatId ?? "1";
+  const avatarSrc = state?.avatarSrc ?? "/avatars/white-smile.png";
+
+  // 预置 signal（按三列分组，决定默认落点）
+  const presets = useMemo(
+    () => ({
+      left: [
+        "I have pen",
+        "I have Type-C cable",
+        "I have Lightning cable",
+        "You can borrow my calculator",
+        "I have MacBook charger",
+      ],
+      center: ["Feel free to seat here", "I am waiting for my friend", "Prefer to seat alone"],
+      right: ["Looking for study buddy", "Low energy, please be gentle", "Here if you need anytime"],
+    }),
+    []
+  );
+
   const [signals, setSignals] = useState<SignalItem[]>([]);
   const [adding, setAdding] = useState(false);
   const [draftText, setDraftText] = useState("");
 
-  // 主舞台尺寸
   const stageRef = useRef<HTMLDivElement>(null);
 
   // 添加一个 signal（按分组决定默认 side 与初始位置）
   function addSignal(text: string, from: "left" | "center" | "right" = "center") {
-    const stage = stageRef.current?.getBoundingClientRect();
+    const rect = stageRef.current?.getBoundingClientRect();
     const id = crypto.randomUUID();
-    const cx = stage ? stage.width / 2 : 480;
-    const cy = stage ? stage.height / 2 : 260;
+    const cx = rect ? rect.width / 2 : 480;
+    const cy = rect ? rect.height / 2 : 260;
 
-    const side: SignalSide = from === "left" ? "left" : from === "right" ? "right" : (signals.length % 2 ? "right" : "left");
+    const side: SignalSide =
+      from === "left" ? "left" : from === "right" ? "right" : signals.length % 2 ? "right" : "left";
     const x = side === "left" ? cx - 260 : cx + 260; // 默认落在头像左右两侧
-    const y = cy + (Math.random() * 120 - 60);       // 上下随机一点
+    const y = cy + (Math.random() * 120 - 60); // 上下随机一点
     setSignals((s) => [...s, { id, text, x, y, side }]);
   }
 
@@ -59,15 +56,17 @@ export default function SignalSelect({
     return {
       onPointerDown: (e: React.PointerEvent) => {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        const startX = e.clientX, startY = e.clientY;
+        const startX = e.clientX,
+          startY = e.clientY;
         const start = { x: sig.x, y: sig.y };
         const rect = stageRef.current!.getBoundingClientRect();
 
         const onMove = (ev: PointerEvent) => {
           const nx = start.x + (ev.clientX - startX);
           const ny = start.y + (ev.clientY - startY);
-          // 限制在舞台内边距范围
-          const pad = 20, w = rect.width, h = rect.height;
+          const pad = 20,
+            w = rect.width,
+            h = rect.height;
           sig.x = Math.max(pad, Math.min(w - pad, nx));
           sig.y = Math.max(pad, Math.min(h - pad, ny));
           setSignals((s) => [...s]); // 触发刷新
@@ -81,12 +80,12 @@ export default function SignalSelect({
       },
       onKeyDown: (e: React.KeyboardEvent) => {
         const step = e.shiftKey ? 10 : 4;
-        if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
           e.preventDefault();
-          if (e.key === "ArrowLeft")  sig.x -= step;
+          if (e.key === "ArrowLeft") sig.x -= step;
           if (e.key === "ArrowRight") sig.x += step;
-          if (e.key === "ArrowUp")    sig.y -= step;
-          if (e.key === "ArrowDown")  sig.y += step;
+          if (e.key === "ArrowUp") sig.y -= step;
+          if (e.key === "ArrowDown") sig.y += step;
           setSignals((s) => [...s]);
         }
       },
@@ -104,6 +103,10 @@ export default function SignalSelect({
     setAdding(false);
   }
 
+  const done = () => {
+    nav("/final", { state: { tableId, seatId, avatarSrc, signals } });
+  };
+
   return (
     <main
       className="
@@ -113,8 +116,11 @@ export default function SignalSelect({
       "
     >
       {/* 背景细纹 */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[.10]
-                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[.10]
+                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
+      />
 
       {/* 顶部：品牌 + 标题 + Done */}
       <header className="px-7 py-6 flex items-center justify-between">
@@ -126,16 +132,16 @@ export default function SignalSelect({
         </div>
 
         <button
-          onClick={() => onDone(signals)}
+          onClick={done}
           className="rounded-lg px-4 py-2 border border-white/25 bg-white/10 hover:bg-white/15 backdrop-blur"
         >
           Done
         </button>
       </header>
 
-      {/* 左上角返回（样式与前页一致，只是位置改到左上） */}
+      {/* 左上角返回（保持样式统一，位置在左上） */}
       <button
-        onClick={onBack}
+        onClick={() => nav(-1)}
         className="
           absolute left-5 top-[68px] z-20 rounded-full
           border border-white/30 bg-white/10 backdrop-blur
@@ -169,14 +175,20 @@ export default function SignalSelect({
 
           {/* 中心头像 */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div className="
+            <div
+              className="
               rounded-full grid place-items-center
               size-[180px] md:size-[220px]
               bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]
               shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]
               backdrop-blur-md
-            ">
-              <img src={avatarSrc} alt="Selected avatar" className="w-[72%] h-[72%] object-contain select-none pointer-events-none" />
+            "
+            >
+              <img
+                src={avatarSrc}
+                alt="Selected avatar"
+                className="w-[72%] h-[72%] object-contain select-none pointer-events-none"
+              />
             </div>
 
             {/* Add Signal 输入条 */}
@@ -197,8 +209,18 @@ export default function SignalSelect({
                     placeholder="Type your signal…"
                     className="rounded-md px-3 py-2 bg-black/25 border border-white/25 focus:outline-none focus:ring-2 focus:ring-white/40"
                   />
-                  <button onClick={addCustom} className="rounded-md px-3 py-2 bg-brand-500 hover:bg-brand-700">Add</button>
-                  <button onClick={() => { setDraftText(""); setAdding(false); }} className="rounded-md px-3 py-2 border border-white/25 bg-white/10 hover:bg-white/15">Cancel</button>
+                  <button onClick={addCustom} className="rounded-md px-3 py-2 bg-brand-500 hover:bg-brand-700">
+                    Add
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDraftText("");
+                      setAdding(false);
+                    }}
+                    className="rounded-md px-3 py-2 border border-white/25 bg-white/10 hover:bg-white/15"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
             </div>
@@ -208,9 +230,24 @@ export default function SignalSelect({
 
       {/* 底部预制 */}
       <section className="px-6 pb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <PresetColumn title=" " colorDot="bg-pink-300" items={presets.left} onPick={(t)=>addSignal(t,"left")} />
-        <PresetColumn title=" " colorDot="bg-violet-300" items={presets.center} onPick={(t)=>addSignal(t,"center")} />
-        <PresetColumn title=" " colorDot="bg-rose-300" items={presets.right} onPick={(t)=>addSignal(t,"right")} />
+        <PresetColumn
+          title=" "
+          colorDot="bg-pink-300"
+          items={presets.left}
+          onPick={(t) => addSignal(t, "left")}
+        />
+        <PresetColumn
+          title=" "
+          colorDot="bg-violet-300"
+          items={presets.center}
+          onPick={(t) => addSignal(t, "center")}
+        />
+        <PresetColumn
+          title=" "
+          colorDot="bg-rose-300"
+          items={presets.right}
+          onPick={(t) => addSignal(t, "right")}
+        />
       </section>
     </main>
   );
@@ -233,9 +270,8 @@ function SignalBubble({
   onPointerDown: (e: React.PointerEvent) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
-  const tail = side === "left"
-    ? "before:left-3 before:-rotate-45"
-    : "before:right-3 before:rotate-45";
+  const tail =
+    side === "left" ? "before:left-3 before:-rotate-45" : "before:right-3 before:rotate-45";
 
   return (
     <div
@@ -246,11 +282,9 @@ function SignalBubble({
       aria-label={`Signal: ${text}`}
       className={[
         "absolute select-none cursor-grab focus:outline-none",
-        // 气泡主体
         "relative max-w-[260px] rounded-xl px-4 py-3",
         "bg-white/20 backdrop-blur border border-white/35 text-white",
         "shadow-[0_8px_24px_rgba(0,0,0,.35)]",
-        // 小尾巴（伪元素）
         "before:content-[''] before:absolute before:bottom-[-8px] before:size-4",
         "before:bg-white/20 before:border-b before:border-r before:border-white/35",
         "before:shadow-[2px_2px_4px_rgba(0,0,0,.15)]",
@@ -271,7 +305,10 @@ function SignalBubble({
 }
 
 function PresetColumn({
-  title, colorDot, items, onPick,
+  title,
+  colorDot,
+  items,
+  onPick,
 }: {
   title: string;
   colorDot: string;
