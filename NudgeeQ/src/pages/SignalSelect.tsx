@@ -156,8 +156,8 @@ export default function SignalSelect() {
       <section className="grow grid place-items-center px-4">
         <div
           ref={stageRef}
-          className="relative w-full max-w-4xl h-[380px] md:h-[420px] rounded-2xl"
-          style={{ touchAction: "none" }} // 允许触屏拖拽
+          className="relative z-10 w-full max-w-4xl h-[380px] md:h-[420px] rounded-2xl overflow-visible"
+          style={{ touchAction: "none" }}   // ✅ 禁止浏览器把手势当滚动/缩放
           role="region"
           aria-label="Signal stage"
         >
@@ -174,25 +174,19 @@ export default function SignalSelect() {
           ))}
 
           {/* 中心头像 */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div
-              className="
-              rounded-full grid place-items-center
-              size-[180px] md:size-[220px]
-              bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]
-              shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]
-              backdrop-blur-md
-            "
-            >
-              <img
-                src={avatarSrc}
-                alt="Selected avatar"
-                className="w-[72%] h-[72%] object-contain select-none pointer-events-none"
-              />
-            </div>
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                <div className="
+                  pointer-events-auto
+                  rounded-full grid place-items-center
+                  size-[180px] md:size-[220px]
+                  bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]
+                  shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]
+                  backdrop-blur-md
+                ">
+                  <img src={avatarSrc} alt="Selected avatar" className="w-[72%] h-[72%] object-contain select-none pointer-events-none" />
+                </div>
 
-            {/* Add Signal 输入条 */}
-            <div className="mt-4 grid place-items-center">
+                <div className="mt-4 grid place-items-center pointer-events-auto">
               {!adding ? (
                 <button
                   onClick={() => setAdding(true)}
@@ -280,18 +274,14 @@ function SignalBubble({
       aria-label={`Signal: ${text}`}
       style={style}
       className={[
-        "absolute select-none cursor-grab active:cursor-grabbing focus:outline-none",
-        // 无尾巴：纯圆角卡片 + 玻璃质感
+        "absolute z-20 touch-none select-none cursor-grab active:cursor-grabbing focus:outline-none",
         "relative max-w-[300px] rounded-2xl px-4 py-3",
-        "border border-white/30",
-        "bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]",
-        "backdrop-blur-xl text-white/95",
-        "shadow-[0_10px_28px_rgba(0,0,0,.35)] transition",
-        "hover:shadow-[0_14px_34px_rgba(0,0,0,.45)]",
-        // 顶部内高光
-        "before:content-[''] before:absolute before:inset-0 before:rounded-2xl",
-        "before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]",
+        "bg-[linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.10))]",
+        "border border-white/30 bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]",
+        "backdrop-blur-xl text-white/95 shadow-[0_10px_28px_rgba(0,0,0,.35)] hover:shadow-[0_14px_34px_rgba(0,0,0,.45)]",
+        "before:content-[''] before:absolute before:inset-0 before:rounded-2xl before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]",
       ].join(" ")}
+
     >
       <div className="pr-7 leading-snug tracking-wide">{text}</div>
 
