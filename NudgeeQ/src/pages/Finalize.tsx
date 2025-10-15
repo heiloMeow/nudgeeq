@@ -76,7 +76,8 @@ export default function Finalize() {
         tableId,
         seatId,
         avatar: avatarSrc,
-        signals: signals.map(s => ({ text: s.text, x: s.x, y: s.y, side: s.side })),
+        signals: signals.map(s => ({ text: s.text, nx: s.nx, ny: s.ny })),
+
         createdAt: new Date().toISOString(),
       };
       const res = await fetch(`${API_BASE}/roles`, {
