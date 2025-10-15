@@ -60,19 +60,6 @@ export default function App() {
         }
       />
 
-      {/* 最后一步：统一提交到后端 JSON，再入房间 */}
-      <Route
-        path="/final"
-        element={
-          <Guard>
-            <Finalize />
-          </Guard>
-        }
-      />
-
-      {/* 房间页 */}
-      <Route path="/room" element={<Room />} />
-
       {/* 兜底重定向 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -1,17 +1,19 @@
+// src/pages/StatusSelect.tsx
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
-/** 运行在 Vite：public 目录静态文件可用 /avatars/<filename> 直接访问 */
+/** 静态资源目录：放在 public/avatars 下，页面里用 /avatars/<filename> 访问 */
 const BASE = "/avatars";
 
-/** 你的资源清单（来自 public/avatars） */
+/** 你的资源清单（文件名来自 public/avatars） */
 const RAW_FILES = [
-  // ---- Female (不含“男”) ----
+  // ---- Female（不含“男”）----
   "brown-annoying.png","brown-normal.png","brown-okay.png","brown-smile.png",
   "colorful-annoying.png","colorful-normal.png","colorful-okay.png","colorful-smile.png",
   "white-annoying.png","white-normal.png","white-okay.png","white-smile.png",
   "white2-annoying.png","white2-normal.png","white2-okay.png","white2-smile.png",
   "yellow-annoying.png","yellow-normal.png","yellow-okay.png","yellow-smile.png",
-  // ---- Male (含“男”) ----
+  // ---- Male（包含“男”）----
   "彩男- annoying.png","彩男- normal.png","彩男-Okay.png","彩男-smile.png",
   "棕男- annoying.png","棕男-Okay.png","棕男-smile.png","棕男-working.png",
   "白男- annoying.png","白男- normal.png","白男-okay.png","白男-Smile.png",
@@ -27,11 +29,10 @@ type Avatar = {
   gender: Gender;
   tone: Tone;
   expr: Expr;
-  file: string;     // 原始文件名（带大小写/空格）
-  src: string;      // /avatars/xxx.png
+  file: string;
+  src: string;
 };
 
-/** 显示用文案（你可以按喜好改） */
 const EXPR_LABEL: Record<Expr, string> = {
   smile: "Happy",
   okay: "All Good",
@@ -40,7 +41,6 @@ const EXPR_LABEL: Record<Expr, string> = {
   working: "Working",
 };
 
-/** 中文“男”系列映射到 tone */
 const ZH_MALE_PREFIX_TO_TONE: Record<string, Tone> = {
   "彩男": "colorful",
   "棕男": "brown",
@@ -49,32 +49,27 @@ const ZH_MALE_PREFIX_TO_TONE: Record<string, Tone> = {
   "黄男": "yellow",
 };
 
-/** 解析文件名 -> Avatar 元信息 */
 function parseFile(file: string): Avatar | null {
   const src = `${BASE}/${encodeURIComponent(file)}`;
   const base = file.replace(/\.(png|jpg|jpeg|webp)$/i, "");
 
-  // 男：包含“男”
+  // 男：文件名包含“男”
   if (base.includes("男")) {
     const prefix = Object.keys(ZH_MALE_PREFIX_TO_TONE).find((p) => base.startsWith(p));
     if (!prefix) return null;
     const tone = ZH_MALE_PREFIX_TO_TONE[prefix];
-    // 取“-”后面的表达式；去空格并小写
-    const part = base.split("-").slice(1).join("-").trim().toLowerCase();
-    // 兼容 Okay/Smile/ normal 前有空格
-    const exprNorm = part.replace(/\s+/g, "");
+    const raw = base.split("-").slice(1).join("-").trim().toLowerCase().replace(/\s+/g, "");
     let expr: Expr | null = null;
-    if (/(^|-)smile$/.test(exprNorm)) expr = "smile";
-    else if (/(^|-)okay$/.test(exprNorm)) expr = "okay";
-    else if (/(^|-)normal$/.test(exprNorm)) expr = "normal";
-    else if (/(^|-)annoying$/.test(exprNorm)) expr = "annoying";
-    else if (/(^|-)working$/.test(exprNorm)) expr = "working";
+    if (/(^|-)smile$/.test(raw)) expr = "smile";
+    else if (/(^|-)okay$/.test(raw)) expr = "okay";
+    else if (/(^|-)normal$/.test(raw)) expr = "normal";
+    else if (/(^|-)annoying$/.test(raw)) expr = "annoying";
+    else if (/(^|-)working$/.test(raw)) expr = "working";
     if (!expr) return null;
-
     return { gender: "male", tone, expr, file, src };
   }
 
-  // 女：格式如 white2-smile
+  // 女：white2-smile / white-smile / yellow-okay 等
   const m = base.match(/^(white2|white|yellow|brown|colorful)[-\s]([a-zA-Z]+)$/i);
   if (!m) return null;
   const tone = m[1].toLowerCase() as Tone;
@@ -87,16 +82,15 @@ function parseFile(file: string): Avatar | null {
 
 const AVATARS: Avatar[] = RAW_FILES.map(parseFile).filter(Boolean) as Avatar[];
 
-/* ========================================================== */
+/* ===================================================== */
 
-export default function StatusSelect({
-  onBack,            // 返回（右下角）
-  onDone,            // 点击 That's It，返回所选 avatar 元信息
-}: {
-  onBack: () => void;
-  onDone: (picked: Avatar) => void;
-}) {
-  // 过滤条件
+export default function StatusSelect() {
+  const nav = useNavigate();
+  const { state } = useLocation() as { state?: { tableId?: string; seatId?: string } };
+  const tableId = state?.tableId;
+  const seatId  = state?.seatId;
+
+  // 筛选条件
   const [gender, setGender] = useState<Gender>("female");
   const [tone, setTone]     = useState<Tone | "any">("any");
   const [expr, setExpr]     = useState<Expr | "any">("any");
@@ -110,13 +104,12 @@ export default function StatusSelect({
     );
   }, [gender, tone, expr]);
 
-  // 轮播索引
   const [idx, setIdx] = useState(0);
-  useEffect(() => { setIdx(0); }, [gender, tone, expr]); // 改筛选时重置索引
+  useEffect(() => { setIdx(0); }, [gender, tone, expr]);
 
   const cur = list[idx];
 
-  // 供筛选器展示的选项
+  // 可选项集合
   const tonesForGender = useMemo(() => {
     const s = new Set<Tone>();
     for (const a of AVATARS) if (a.gender === gender) s.add(a.tone);
@@ -129,7 +122,7 @@ export default function StatusSelect({
     return Array.from(s);
   }, [gender, tone]);
 
-  // 键盘左右键导航
+  // 键盘左右切换
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") next();
@@ -141,7 +134,12 @@ export default function StatusSelect({
 
   const prev = () => setIdx(i => (list.length ? (i - 1 + list.length) % list.length : 0));
   const next = () => setIdx(i => (list.length ? (i + 1) % list.length : 0));
-  const pick = () => { if (cur) onDone(cur); };
+
+  // 完成：带着头像去 Step 4
+  const goNext = () => {
+    if (!cur) return;
+    nav("/signal", { state: { tableId, seatId, avatarSrc: cur.src } });
+  };
 
   return (
     <main
@@ -154,19 +152,18 @@ export default function StatusSelect({
       <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[.10]
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]" />
 
-      {/* 顶部品牌 */}
+      {/* 顶部品牌与标题 */}
       <header className="px-7 py-6">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
       </header>
 
-      {/* 标题 */}
       <section className="px-4">
         <h2 className="text-center font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 3</h2>
         <h1 className="text-center font-display text-[clamp(28px,5vw,48px)]">Pick Your Status</h1>
         <p className="text-center mt-2 opacity-85">Edit My Avatar</p>
       </section>
 
-      {/* 筛选器 */}
+      {/* 筛选器（深色下拉 + 白字） */}
       <section className="px-4 mt-4 flex flex-wrap gap-3 justify-center">
         <Select value={gender} onChange={v => setGender(v as Gender)} label="Gender">
           <option value="female">Female</option>
@@ -175,23 +172,18 @@ export default function StatusSelect({
 
         <Select value={tone} onChange={v => setTone(v as any)} label="Skin">
           <option value="any">Any</option>
-          {tonesForGender.map(t => (
-            <option key={t} value={t}>{t}</option>
-          ))}
+          {tonesForGender.map(t => (<option key={t} value={t}>{t}</option>))}
         </Select>
 
         <Select value={expr} onChange={v => setExpr(v as any)} label="Expression">
           <option value="any">Any</option>
-          {exprForSelection.map(e => (
-            <option key={e} value={e}>{EXPR_LABEL[e]}</option>
-          ))}
+          {exprForSelection.map(e => (<option key={e} value={e}>{EXPR_LABEL[e]}</option>))}
         </Select>
       </section>
 
       {/* 轮播 */}
       <section className="grow grid place-items-center px-4 py-6">
         <div className="relative w-full max-w-4xl">
-          {/* 左右箭头 */}
           <button
             onClick={prev}
             className="absolute left-0 top-1/2 -translate-y-1/2 text-3xl opacity-70 hover:opacity-100"
@@ -203,7 +195,6 @@ export default function StatusSelect({
             aria-label="Next"
           >»</button>
 
-          {/* 三个气泡：左预览 / 中心大图 / 右预览 */}
           <div className="grid grid-cols-3 items-center">
             <Bubble size="lg" dim>
               {list.length ? <img src={list[(idx - 1 + list.length) % list.length].src} alt="" className="w-full h-full object-contain rounded-full" /> : null}
@@ -218,15 +209,14 @@ export default function StatusSelect({
             </Bubble>
           </div>
 
-          {/* 当前表达文案 */}
           <div className="text-center mt-4 text-xl">{cur ? EXPR_LABEL[cur.expr] : "No result"}</div>
         </div>
       </section>
 
-      {/* 底部确认按钮 */}
+      {/* 底部操作 */}
       <section className="px-4 pb-16 grid place-items-center">
         <button
-          onClick={pick}
+          onClick={goNext}
           disabled={!cur}
           className="min-w-[180px] rounded-lg py-2 bg-brand-500 hover:bg-brand-700 disabled:opacity-50"
         >
@@ -234,9 +224,9 @@ export default function StatusSelect({
         </button>
       </section>
 
-      {/* 右下角返回（你要的） */}
+      {/* 右下角返回（与其它页一致） */}
       <button
-        onClick={onBack}
+        onClick={() => nav(-1)}
         className="fixed bottom-5 right-5 z-20 rounded-full border border-white/30 bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15"
         aria-label="Back"
       >
@@ -246,7 +236,7 @@ export default function StatusSelect({
   );
 }
 
-/* ========== 小组件们 ========== */
+/* ========= 小组件 ========= */
 
 function Select({
   value, onChange, label, children,
@@ -259,7 +249,7 @@ function Select({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          // 关键：自定义底色/文字 + 兼容选项面板
+          // 深色半透明底 + 白字；下拉面板也尽量深色白字（受浏览器限制）
           className="
             appearance-none pl-3 pr-8 py-2 rounded-md
             bg-white/10 text-white border border-white/25 backdrop-blur
@@ -269,7 +259,7 @@ function Select({
         >
           {children}
         </select>
-        {/* 自定义箭头 */}
+        {/* 自定义小箭头 */}
         <span
           aria-hidden
           className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-80"
@@ -280,7 +270,6 @@ function Select({
     </label>
   );
 }
-
 
 function Bubble({ size, dim=false, children }: { size: "lg"|"xl"; dim?: boolean; children?: React.ReactNode }) {
   const cls = size === "xl" ? "size-[220px] md:size-[260px]" : "size-[160px] md:size-[180px]";

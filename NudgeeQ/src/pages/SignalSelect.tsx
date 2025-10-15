@@ -255,9 +255,10 @@ export default function SignalSelect() {
 
 /* ---------- 子组件们 ---------- */
 
+// 替换 src/pages/SignalSelect.tsx 里的 function SignalBubble(...) 整段
 function SignalBubble({
   text,
-  side,
+  side,              // 保留但不再使用
   style,
   onRemove,
   onPointerDown,
@@ -270,9 +271,6 @@ function SignalBubble({
   onPointerDown: (e: React.PointerEvent) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
-  const tail =
-    side === "left" ? "before:left-3 before:-rotate-45" : "before:right-3 before:rotate-45";
-
   return (
     <div
       tabIndex={0}
@@ -280,22 +278,32 @@ function SignalBubble({
       onKeyDown={onKeyDown}
       role="group"
       aria-label={`Signal: ${text}`}
-      className={[
-        "absolute select-none cursor-grab focus:outline-none",
-        "relative max-w-[260px] rounded-xl px-4 py-3",
-        "bg-white/20 backdrop-blur border border-white/35 text-white",
-        "shadow-[0_8px_24px_rgba(0,0,0,.35)]",
-        "before:content-[''] before:absolute before:bottom-[-8px] before:size-4",
-        "before:bg-white/20 before:border-b before:border-r before:border-white/35",
-        "before:shadow-[2px_2px_4px_rgba(0,0,0,.15)]",
-        tail,
-      ].join(" ")}
       style={style}
+      className={[
+        "absolute select-none cursor-grab active:cursor-grabbing focus:outline-none",
+        // 无尾巴：纯圆角卡片 + 玻璃质感
+        "relative max-w-[300px] rounded-2xl px-4 py-3",
+        "border border-white/30",
+        "bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]",
+        "backdrop-blur-xl text-white/95",
+        "shadow-[0_10px_28px_rgba(0,0,0,.35)] transition",
+        "hover:shadow-[0_14px_34px_rgba(0,0,0,.45)]",
+        // 顶部内高光
+        "before:content-[''] before:absolute before:inset-0 before:rounded-2xl",
+        "before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]",
+      ].join(" ")}
     >
-      <div className="pr-6">{text}</div>
+      <div className="pr-7 leading-snug tracking-wide">{text}</div>
+
+      {/* 关闭按钮：小圆片 */}
       <button
         onClick={onRemove}
-        className="absolute top-1 right-1 rounded-sm px-1 leading-none text-sm border border-white/30 bg-white/10 hover:bg-white/20"
+        className={[
+          "absolute -top-2 -right-2 size-6 rounded-full",
+          "grid place-items-center text-[13px] leading-none",
+          "border border-white/40 bg-white/25 backdrop-blur hover:bg-white/35",
+          "shadow-[0_4px_10px_rgba(0,0,0,.35)]",
+        ].join(" ")}
         aria-label="Remove signal"
       >
         ×
@@ -303,6 +311,7 @@ function SignalBubble({
     </div>
   );
 }
+
 
 function PresetColumn({
   title,
