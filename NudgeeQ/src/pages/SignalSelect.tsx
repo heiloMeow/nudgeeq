@@ -104,8 +104,24 @@ export default function SignalSelect() {
   }
 
   const done = () => {
-    nav("/final", { state: { tableId, seatId, avatarSrc, signals } });
-  };
+  const rect = stageRef.current?.getBoundingClientRect();
+  const w = rect?.width ?? 1;
+  const h = rect?.height ?? 1;
+
+  const normalized = signals.map(s => ({
+    id: s.id,
+    text: s.text,
+    nx: s.x / w,   // 0~1
+    ny: s.y / h,   // 0~1
+  }));
+
+  nav("/final", {
+    state: {
+      tableId, seatId, avatarSrc,
+      signals: normalized,   // 👈 传百分比
+    }
+  });
+};
 
   return (
     <main

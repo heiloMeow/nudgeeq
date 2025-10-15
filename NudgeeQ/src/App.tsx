@@ -8,6 +8,7 @@ import TableSelect from "./pages/TableSelect";
 import SeatSelect from "./pages/SeatSelect";
 import StatusSelect from "./pages/StatusSelect";
 import SignalSelect from "./pages/SignalSelect";
+import Finalize from "./pages/Finalize";
 
 
 // 全局 store（草稿用户等）
@@ -59,7 +60,15 @@ export default function App() {
           </Guard>
         }
       />
-
+      <Route
+        path="/final"
+        element={
+          <Guard>
+            <Finalize />
+          </Guard>
+        }
+      />
+      
       {/* 兜底重定向 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
