@@ -1,0 +1,28 @@
+/* src/index.css */
+@import "tailwindcss" source("../src");
+
+@theme {
+  /* 更贴近稿子的粉紫梯度 */
+  --color-brand-100: oklch(0.92 0.06 330);   /* 浅粉紫 */
+  --color-brand-200: oklch(0.86 0.09 330);
+  --color-brand-300: oklch(0.80 0.12 330);   /* 主色用于顶部光晕 */
+  --color-brand-800: oklch(0.30 0.05 330);   /* 底部暗紫黑 */
+  --font-display: "DM Serif Display", ui-serif, Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+/* 泡泡漂浮 */
+@keyframes bubble-float { 50% { transform: translateY(-10px) } }
+.bubble-float { animation: bubble-float 10s ease-in-out infinite; }
+@layer base {
+  :root { color-scheme: dark; } /* 让一些浏览器自动用深色控件 */
+  select {
+    color: white;
+    background-color: rgba(255,255,255,.10);
+    border-color: rgba(255,255,255,.25);
+  }
+  option {
+    color: white;
+    background-color: #151821; /* 下拉面板底色（浏览器支持时生效） */
+  }
+}

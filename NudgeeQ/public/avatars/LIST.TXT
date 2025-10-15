@@ -1,0 +1,42 @@
+brown-annoying.png
+brown-normal.png
+brown-okay.png
+brown-smile.png
+colorful-annoying.png
+colorful-normal.png
+colorful-okay.png
+colorful-smile.png
+LIST.TXT
+white-annoying.png
+white-normal.png
+white-okay.png
+white-smile.png
+white2-annoying.png
+white2-normal.png
+white2-okay.png
+white2-smile.png
+yellow-annoying.png
+yellow-normal.png
+yellow-okay.png
+yellow-smile.png
+²ÊÄÐ- annoying.png
+²ÊÄÐ- normal.png
+²ÊÄÐ-Okay.png
+²ÊÄÐ-smile.png
+ÐÂ½¨ ÎÄ±¾ÎÄµµ.bat
+×ØÄÐ- annoying.png
+×ØÄÐ-Okay.png
+×ØÄÐ-smile.png
+×ØÄÐ-working.png
+°×ÄÐ- annoying.png
+°×ÄÐ- normal.png
+°×ÄÐ-okay.png
+°×ÄÐ-Smile.png
+°×ÄÐ2- annoying.png
+°×ÄÐ2-normal.png
+°×ÄÐ2-Okay.png
+°×ÄÐ2-smile.png
+»ÆÄÐ- annoying.png
+»ÆÄÐ-normal.png
+»ÆÄÐ-Okay.png
+»ÆÄÐ-smile.png
