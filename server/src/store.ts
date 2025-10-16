@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import { nanoid } from "nanoid";
 import type { Role, TableRow } from "./types.js";
 
-let db!: Database; // 实例类型
+let db!: InstanceType<typeof Database>;
 
 /** 初始化 SQLite（自动建表与种子桌号） */
 export function initDB() {

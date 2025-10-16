@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",                  // ≥ ES2015 解决 Set 迭代
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "dist",
+    "rootDir": "src",
+
+    "esModuleInterop": true,             // ✅ 允许 default import CJS 包（express/cors）
+    "allowSyntheticDefaultImports": true,
+
+    "strict": true,
+    "skipLibCheck": true,                // 少踩 @types 的版本坑
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2020"]
+                        // Node 20 足够；你用到的 Set/Map 等都在这
+    /* 如果你 target 还必须是 ES5，就加：
+       "downlevelIteration": true
+       但我们已经用 ES2020，就不需要了 */
+  },
+  "include": ["src"]
+}
