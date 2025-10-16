@@ -1,68 +1,73 @@
 // src/pages/Finalize.tsx
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
-type SignalItem = { id: string; text: string; nx: number; ny: number };
-
-const { state } = useLocation() as {
-  state?: { tableId?: string; seatId?: string; avatarSrc?: string; signals?: SignalItem[] };
-};
-
-const signals = state?.signals ?? [];
-
-/* 只读展示版气泡（无尾巴、不可拖拽/删除） */
-function SignalBubbleView({ text, nx, ny }:{ text:string; nx:number; ny:number }) {
-  return (
-    <div
-      className="absolute z-20 select-none max-w-[300px] rounded-2xl px-4 py-3
-                 border border-white/30 bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]
-                 backdrop-blur-xl text-white/95 shadow-[0_10px_28px_rgba(0,0,0,.35)]
-                 before:content-[''] before:absolute before:inset-0 before:rounded-2xl
-                 before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]"
-      style={{
-        left: `${(nx * 100).toFixed(2)}%`,
-        top:  `${(ny * 100).toFixed(2)}%`,
-        transform: "translate(-50%,-50%)"
-      }}
-    >
-      <div className="leading-snug tracking-wide">{text}</div>
-    </div>
-  );
-}
-
+/** 统一：最终页用“百分比定位”的信号 */
+type NormalizedSignal = { id: string; text: string; nx: number; ny: number };
+/** 兼容：如果上一步还传了像素坐标，也能兜底转换 */
+type PixelSignal = { id: string; text: string; x: number; y: number; side?: "left"|"right" };
 
 export default function Finalize() {
   const nav = useNavigate();
   const { state } = useLocation() as {
-    state?: { tableId?: string; seatId?: string; avatarSrc?: string; signals?: SignalItem[] };
+    state?: {
+      tableId?: string;
+      seatId?: string;
+      avatarSrc?: string;
+      signals?: Array<NormalizedSignal | PixelSignal>;
+    };
   };
   const { draftUser, commitUser } = useApp();
 
   const tableId = state?.tableId ?? "";
-  const seatId = state?.seatId ?? "";
+  const seatId  = state?.seatId ?? "";
   const avatarSrc = state?.avatarSrc ?? "";
-  const signals = state?.signals ?? [];
+  const rawSignals = state?.signals ?? [];
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // 背景小圆点装饰（位置/大小/透明度）
+  /** 舞台尺寸（用于像素→百分比的兜底转换） */
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageSize, setStageSize] = useState({ w: 1, h: 1 });
+  useLayoutEffect(() => {
+    const update = () => {
+      const r = stageRef.current?.getBoundingClientRect();
+      if (r) setStageSize({ w: r.width, h: r.height });
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  /** 归一化后的 signals：优先使用 nx/ny；若没有则用 x/y 与舞台尺寸兜底转换 */
+  const signals = useMemo<NormalizedSignal[]>(() => {
+    return rawSignals.map((s: any) => {
+      if (typeof s.nx === "number" && typeof s.ny === "number") return s as NormalizedSignal;
+      const nx = (s.x ?? 0) / (stageSize.w || 1);
+      const ny = (s.y ?? 0) / (stageSize.h || 1);
+      return { id: s.id, text: s.text, nx, ny };
+    });
+  }, [rawSignals, stageSize]);
+
+  /** 背景小圆点装饰 */
   const dots = useMemo(
     () => [
       { left: "72%", top: "16%", size: 52, opacity: 0.25 },
       { left: "86%", top: "42%", size: 38, opacity: 0.22 },
       { left: "64%", top: "70%", size: 44, opacity: 0.18 },
       { left: "12%", top: "62%", size: 36, opacity: 0.22 },
-      { left: "18%", top: "28%", size: 28, opacity: 0.2 },
-      { left: "42%", top: "18%", size: 22, opacity: 0.2 },
+      { left: "18%", top: "28%", size: 28, opacity: 0.20 },
+      { left: "42%", top: "18%", size: 22, opacity: 0.20 },
     ],
     []
   );
 
   useEffect(() => {
+    // 缺关键数据则回到起点
     if (!draftUser || !tableId || !seatId) nav("/role", { replace: true });
   }, []);
 
@@ -76,18 +81,20 @@ export default function Finalize() {
         tableId,
         seatId,
         avatar: avatarSrc,
-        signals: signals.map(s => ({ text: s.text, nx: s.nx, ny: s.ny })),
-
+        // 用百分比提交，后端想存也更稳
+        signals: signals.map(s => ({ id: s.id, text: s.text, nx: s.nx, ny: s.ny })),
         createdAt: new Date().toISOString(),
       };
-      const res = await fetch(`${API_BASE}/roles`, {
+
+      {/*const res = await fetch(`${API_BASE}/roles`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      commitUser();
-      nav("/room", { replace: true });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);*/}
+
+      commitUser();                 // ✅ 最终一步才真正落盘
+      nav("/nearby", { replace: true });
     } catch (e: any) {
       setErr(e?.message ?? "Submit failed");
     } finally {
@@ -133,18 +140,20 @@ export default function Finalize() {
         {tableId ? `Table ${tableId}` : "Ready"}
       </h1>
 
-      {/* 舞台：保留 signal + 放大头像（75%） */}
+      {/* 舞台：保留 signal（同位置渲染） + 放大头像 */}
       <section className="grow grid place-items-center px-4 relative z-10">
         <div
+          ref={stageRef}
           className="relative w-full max-w-4xl h-[520px] md:h-[560px] rounded-2xl overflow-visible"
           role="region"
           aria-label="Preview"
         >
-          {/* 展示 signals（按 Step4 记录的位置渲染） */}
-          {signals.map(s => (
-             <SignalBubbleView key={s.id} text={s.text} nx={s.nx} ny={s.ny} />
+          {/* signals：按百分比定位，避免 Tailwind 动态类失效，用 style 设置 */}
+          {signals.map((s) => (
+            <SignalBubbleView key={s.id} text={s.text} nx={s.nx} ny={s.ny} />
           ))}
-          {/* 中心头像（从 180/220 放大到 315/385） */}
+
+          {/* 中心头像（从 180/220 放大到 315/385，即 ~75% 放大） */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <div
               className="
@@ -175,6 +184,7 @@ export default function Finalize() {
           disabled={loading}
           className={[
             "relative min-w-[240px] px-6 py-3 rounded-2xl",
+            // 玻璃风 + 边框 + 高光
             "border border-white/30",
             "bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]",
             "backdrop-blur-xl text-white text-lg font-semibold tracking-wide",
@@ -189,7 +199,7 @@ export default function Finalize() {
         {err && <div className="mt-3 text-red-200 text-sm">{err}</div>}
       </section>
 
-      {/* 右下角返回 */}
+      {/* 右下角返回（与前面一致） */}
       <button
         onClick={() => nav(-1)}
         className="
@@ -202,5 +212,27 @@ export default function Finalize() {
         ← Back
       </button>
     </main>
+  );
+}
+
+/* ========== 只读气泡（无尾巴） ========== */
+function SignalBubbleView({ text, nx, ny }: { text: string; nx: number; ny: number }) {
+  return (
+    <div
+      className="absolute z-20 select-none max-w-[300px] rounded-2xl px-4 py-3
+                 border border-white/30
+                 bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]
+                 backdrop-blur-xl text-white/95
+                 shadow-[0_10px_28px_rgba(0,0,0,.35)]
+                 before:content-[''] before:absolute before:inset-0 before:rounded-2xl
+                 before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]"
+      style={{
+        left: `${(nx * 100).toFixed(2)}%`,
+        top:  `${(ny * 100).toFixed(2)}%`,
+        transform: "translate(-50%, -50%)",
+      }}
+    >
+      <div className="leading-snug tracking-wide">{text}</div>
+    </div>
   );
 }

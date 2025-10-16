@@ -2,15 +2,17 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
+
 type SignalSide = "left" | "right";
 type SignalItem = { id: string; text: string; x: number; y: number; side: SignalSide };
 
 export default function SignalSelect() {
   const nav = useNavigate();
+  
   const { state } = useLocation() as {
     state?: { tableId?: string; seatId?: string; avatarSrc?: string };
   };
-
+  
   const tableId = state?.tableId ?? "1";
   const seatId = state?.seatId ?? "1";
   const avatarSrc = state?.avatarSrc ?? "/avatars/white-smile.png";

@@ -9,7 +9,7 @@ import SeatSelect from "./pages/SeatSelect";
 import StatusSelect from "./pages/StatusSelect";
 import SignalSelect from "./pages/SignalSelect";
 import Finalize from "./pages/Finalize";
-
+import NearbyTables from "./pages/NearbyTables";
 
 // 全局 store（草稿用户等）
 import { useApp } from "./app/store";
@@ -65,6 +65,14 @@ export default function App() {
         element={
           <Guard>
             <Finalize />
+          </Guard>
+        }
+      />
+      <Route
+        path="/nearby"
+        element={
+          <Guard>
+            <NearbyTables />
           </Guard>
         }
       />
