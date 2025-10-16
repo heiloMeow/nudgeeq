@@ -1,6 +1,7 @@
 // server/src/store.ts
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
+import { nanoid } from "nanoid";
 import type { Role, TableRow } from "./types.js";
 
 let db: Database.Database;
@@ -32,15 +33,16 @@ export function initDB() {
       PRIMARY KEY (tableId, seatIndex),
       FOREIGN KEY (tableId) REFERENCES tables(id) ON DELETE CASCADE
     );
+
     -- 消息
     CREATE TABLE IF NOT EXISTS messages (
-    id         TEXT PRIMARY KEY,
-    fromRoleId TEXT NOT NULL,
-    toRoleId   TEXT NOT NULL,
-    text       TEXT NOT NULL,
-    createdAt  TEXT NOT NULL,
-    FOREIGN KEY (fromRoleId) REFERENCES roles(id),
-    FOREIGN KEY (toRoleId)   REFERENCES roles(id)
+      id         TEXT PRIMARY KEY,
+      fromRoleId TEXT NOT NULL,
+      toRoleId   TEXT NOT NULL,
+      text       TEXT NOT NULL,
+      createdAt  TEXT NOT NULL,
+      FOREIGN KEY (fromRoleId) REFERENCES roles(id),
+      FOREIGN KEY (toRoleId)   REFERENCES roles(id)
     );
     CREATE INDEX IF NOT EXISTS idx_msg_from_time ON messages(fromRoleId, createdAt DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_msg_to_time   ON messages(toRoleId,   createdAt DESC, id DESC);
@@ -51,25 +53,22 @@ export function initDB() {
     USING fts5(signal, content='role_signals', content_rowid='rowid');
 
     CREATE TRIGGER IF NOT EXISTS role_signals_ai AFTER INSERT ON role_signals BEGIN
-    INSERT INTO role_signals_fts(rowid, signal) VALUES (new.rowid, new.signal);
+      INSERT INTO role_signals_fts(rowid, signal) VALUES (new.rowid, new.signal);
     END;
     CREATE TRIGGER IF NOT EXISTS role_signals_ad AFTER DELETE ON role_signals BEGIN
-    INSERT INTO role_signals_fts(role_signals_fts, rowid, signal) VALUES ('delete', old.rowid, old.signal);
+      INSERT INTO role_signals_fts(role_signals_fts, rowid, signal) VALUES ('delete', old.rowid, old.signal);
     END;
     CREATE TRIGGER IF NOT EXISTS role_signals_au AFTER UPDATE ON role_signals BEGIN
-    INSERT INTO role_signals_fts(role_signals_fts, rowid, signal) VALUES ('delete', old.rowid, old.signal);
-    INSERT INTO role_signals_fts(rowid, signal) VALUES (new.rowid, new.signal);
+      INSERT INTO role_signals_fts(role_signals_fts, rowid, signal) VALUES ('delete', old.rowid, old.signal);
+      INSERT INTO role_signals_fts(rowid, signal) VALUES (new.rowid, new.signal);
     END;
-
   `);
 
   // 首次运行自动创建一些桌号（可用 SEED_TABLES 覆盖：例如 "24,12,25,23"）
   const count = (db.prepare(`SELECT COUNT(*) AS c FROM tables`).get() as any).c as number;
   if (count === 0) {
-    const ids = (process.env.SEED_TABLES ?? "24,12,25,23")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const ids = (process.env.SEED_TABLES ?? "24,12,23,25")
+      .split(",").map((s) => s.trim()).filter(Boolean);
     const insertTable = db.prepare(`INSERT INTO tables(id) VALUES (?)`);
     const insertSeat = db.prepare(`INSERT INTO seats(tableId, seatIndex, roleId) VALUES (?, ?, NULL)`);
     const tx = db.transaction(() => {
@@ -114,7 +113,7 @@ export async function findTable(id: string): Promise<TableRow | undefined> {
   return { id, seats };
 }
 
-/* -------------------- 写入 -------------------- */
+/* -------------------- 写入：角色/座位 -------------------- */
 
 export async function createRole(r: Role) {
   const seatIdx = r.seatId - 1;
@@ -147,6 +146,9 @@ export async function createRole(r: Role) {
       r.tableId,
       seatIdx
     );
+
+    // 维护 role_signals + FTS
+    replaceRoleSignals(r.id, r.signals ?? []);
   });
   tx();
 }
@@ -157,11 +159,16 @@ export async function deleteRole(roleId: string) {
       .prepare(`SELECT tableId, seatId FROM roles WHERE id = ?`)
       .get(roleId) as { tableId: string; seatId: number } | undefined;
     if (!r) return;
+
     db.prepare(`DELETE FROM roles WHERE id = ?`).run(roleId);
     db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`).run(
       r.tableId,
       r.seatId - 1
     );
+
+    // 清理 role_signals
+    db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(roleId);
+    // messages 是否清理看需求；通常保留历史即可
   });
   tx();
 }
@@ -171,6 +178,173 @@ export async function patchSignals(roleId: string, signals: string[]) {
     .prepare(`UPDATE roles SET signals = ? WHERE id = ?`)
     .run(JSON.stringify(signals ?? []), roleId);
   if (info.changes === 0) throw new Error("ROLE_NOT_FOUND");
+
+  // 同步到 role_signals（FTS 触发器会自动更新索引）
+  replaceRoleSignals(roleId, signals ?? []);
+}
+
+/* -------------------- 角色通用编辑（含换座） -------------------- */
+export async function storeUpdateRole(
+  roleId: string,
+  updates: Partial<{ name: string; avatar: string; signals: string[]; tableId: string; seatId: number; }>
+): Promise<boolean> {
+  const tx = db.transaction(() => {
+    const row = db.prepare(`SELECT * FROM roles WHERE id = ?`).get(roleId) as any;
+    if (!row) return false;
+
+    const next = {
+      name: updates.name ?? row.name,
+      avatar: updates.avatar ?? row.avatar,
+      tableId: String(updates.tableId ?? row.tableId),
+      seatId: Number(updates.seatId ?? row.seatId),
+      signals: Array.isArray(updates.signals) ? updates.signals : safeParse(row.signals, [] as string[]),
+    };
+
+    // 如果换桌或换座，做占用校验与 seats 迁移
+    const moved = next.tableId !== row.tableId || next.seatId !== row.seatId;
+    if (moved) {
+      const seatIdxNew = next.seatId - 1;
+      if (seatIdxNew < 0 || seatIdxNew > 5) throw new Error("SEAT_OUT_OF_RANGE");
+
+      const table = db.prepare(`SELECT id FROM tables WHERE id = ?`).get(next.tableId);
+      if (!table) throw new Error("TABLE_NOT_FOUND");
+
+      const seat = db
+        .prepare(`SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`)
+        .get(next.tableId, seatIdxNew) as { roleId: string | null } | undefined;
+      if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
+      if (seat.roleId && seat.roleId !== roleId) throw new Error("SEAT_TAKEN");
+
+      // 释放旧座
+      db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
+        .run(row.tableId, row.seatId - 1);
+      // 占新座
+      db.prepare(`UPDATE seats SET roleId = ? WHERE tableId = ? AND seatIndex = ?`)
+        .run(roleId, next.tableId, seatIdxNew);
+    }
+
+    // 更新角色表
+    db.prepare(
+      `UPDATE roles SET name=?, avatar=?, signals=?, tableId=?, seatId=? WHERE id=?`
+    ).run(
+      next.name,
+      next.avatar,
+      JSON.stringify(next.signals ?? []),
+      next.tableId,
+      next.seatId,
+      roleId
+    );
+
+    // 同步 role_signals
+    replaceRoleSignals(roleId, next.signals ?? []);
+
+    return true;
+  });
+
+  return tx();
+}
+
+/* -------------------- FTS 搜索（signal -> 角色+桌号） -------------------- */
+export async function searchRolesBySignalFTS(
+  q: string,
+  limit: number
+): Promise<Array<{ role: { id: string; name: string; avatar: string }, tableId: string }>> {
+  const terms = q.trim().split(/\s+/).filter(Boolean).map(normalizeSignal);
+  if (!terms.length) return [];
+  // 前缀匹配：加 *；多词 AND
+  const ftsQuery = terms.map(t => `${t}*`).join(" AND ");
+
+  const rows = db.prepare(
+    `
+    SELECT r.id as id, r.name as name, r.avatar as avatar, r.tableId as tableId
+    FROM role_signals_fts f
+    JOIN role_signals  rs ON rs.rowid = f.rowid
+    JOIN roles         r  ON r.id     = rs.roleId
+    WHERE f MATCH ?
+    GROUP BY r.id
+    LIMIT ?
+    `
+  ).all(ftsQuery, limit) as Array<{ id: string; name: string; avatar: string; tableId: string }>;
+
+  return rows.map(r => ({ role: { id: r.id, name: r.name, avatar: r.avatar }, tableId: r.tableId }));
+}
+
+/* -------------------- 消息：入库与分页查询（Keyset 游标） -------------------- */
+export async function addMessage(fromRoleId: string, toRoleId: string, text: string): Promise<string> {
+  const id = nanoid(10);
+  const createdAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO messages(id, fromRoleId, toRoleId, text, createdAt) VALUES (?,?,?,?,?)`
+  ).run(id, fromRoleId, toRoleId, text, createdAt);
+  return id;
+}
+
+export async function getMessagesSent(
+  roleId: string,
+  opt: { cursor?: string; limit: number }
+): Promise<{ items: Array<{ id: string; to: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }> {
+  const { ts, lastId } = parseCursor(opt.cursor);
+  const base = `
+    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
+           rto.id as toId, rto.name as toName
+    FROM messages m
+    JOIN roles rto ON rto.id = m.toRoleId
+    WHERE m.fromRoleId = ?
+  `;
+  const cond = ts
+    ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))`
+    : ``;
+  const order = `ORDER BY m.createdAt DESC, m.id DESC LIMIT ?`;
+
+  const params: any[] = [roleId];
+  if (ts) params.push(ts, ts, lastId);
+  params.push(opt.limit);
+
+  const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
+  const items = rows.map(r => ({
+    id: r.id,
+    to: { id: r.toId, name: r.toName },
+    text: r.text,
+    createdAt: r.createdAt,
+  }));
+  const nextCursor = items.length === opt.limit
+    ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
+    : undefined;
+  return { items, nextCursor };
+}
+
+export async function getMessagesReceived(
+  roleId: string,
+  opt: { cursor?: string; limit: number }
+): Promise<{ items: Array<{ id: string; from: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }> {
+  const { ts, lastId } = parseCursor(opt.cursor);
+  const base = `
+    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
+           rfrom.id as fromId, rfrom.name as fromName
+    FROM messages m
+    JOIN roles rfrom ON rfrom.id = m.fromRoleId
+    WHERE m.toRoleId = ?
+  `;
+  const cond = ts
+    ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))`
+    : ``;
+  const order = `ORDER BY m.createdAt DESC, m.id DESC LIMIT ?`;
+
+  const params: any[] = [roleId];
+  if (ts) params.push(ts, ts, lastId);
+  params.push(opt.limit);
+
+  const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
+  const items = rows.map(r => ({
+    id: r.id,
+    from: { id: r.fromId, name: r.fromName },
+    text: r.text,
+    createdAt: r.createdAt,
+  }));
+  const nextCursor = items.length === opt.limit
+    ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
+    : undefined;
+  return { items, nextCursor };
 }
 
 /* -------------------- 小工具 -------------------- */
@@ -181,26 +355,30 @@ function safeParse<T>(s: string, d: T): T {
     return d;
   }
 }
-// 通用编辑（内部做事务；若换座需校验冲突）
-export async function storeUpdateRole(
-  roleId: string,
-  updates: Partial<{ name: string; avatar: string; signals: string[]; tableId: string; seatId: number; }>
-): Promise<boolean>;
 
-// FTS 搜索（q 支持多词，limit 上限 100）
-export async function searchRolesBySignalFTS(
-  q: string,
-  limit: number
-): Promise<Array<{ role: { id: string; name: string; avatar: string }, tableId: string }>>;
+function normalizeSignal(s: string) {
+  return s.trim().toLowerCase();
+}
 
-// 消息（插入 + 两种分页获取）
-export async function addMessage(fromRoleId: string, toRoleId: string, text: string): Promise<string>;
-export async function getMessagesSent(
-  roleId: string,
-  opt: { cursor?: string; limit: number }
-): Promise<{ items: Array<{ id: string; to: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }>;
+function replaceRoleSignals(roleId: string, signals: string[]) {
+  const del = db.prepare(`DELETE FROM role_signals WHERE roleId = ?`);
+  const ins = db.prepare(`INSERT INTO role_signals(roleId, signal) VALUES (?, ?)`);
+  const tx = db.transaction(() => {
+    del.run(roleId);
+    for (const sig of signals ?? []) {
+      const v = normalizeSignal(sig);
+      if (v) ins.run(roleId, v);
+    }
+  });
+  tx();
+}
 
-export async function getMessagesReceived(
-  roleId: string,
-  opt: { cursor?: string; limit: number }
-): Promise<{ items: Array<{ id: string; from: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }>;
+function parseCursor(cursor?: string): { ts?: string; lastId?: string } {
+  if (!cursor) return {};
+  const i = cursor.lastIndexOf("_");
+  if (i <= 0) return {};
+  const ts = cursor.slice(0, i);
+  const id = cursor.slice(i + 1);
+  if (!ts || !id) return {};
+  return { ts, lastId: id };
+}
