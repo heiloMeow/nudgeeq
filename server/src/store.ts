@@ -1,14 +1,17 @@
 // server/src/store.ts
 import Database from "better-sqlite3";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { mkdirSync } from "node:fs";
 import { nanoid } from "nanoid";
 import type { Role, TableRow } from "./types.js";
 
-let db: Database.Database;
+let db!: Database; // 实例类型
 
 /** 初始化 SQLite（自动建表与种子桌号） */
 export function initDB() {
   const file = process.env.DB_FILE ?? resolve("data/db.sqlite");
+  try { mkdirSync(dirname(file), { recursive: true }); } catch {}
+
   db = new Database(file);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
@@ -23,9 +26,7 @@ export function initDB() {
       seatId    INTEGER NOT NULL CHECK(seatId BETWEEN 1 AND 6),
       createdAt TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS tables (
-      id TEXT PRIMARY KEY
-    );
+    CREATE TABLE IF NOT EXISTS tables ( id TEXT PRIMARY KEY );
     CREATE TABLE IF NOT EXISTS seats (
       tableId   TEXT NOT NULL,
       seatIndex INTEGER NOT NULL CHECK(seatIndex BETWEEN 0 AND 5),
@@ -40,17 +41,24 @@ export function initDB() {
       fromRoleId TEXT NOT NULL,
       toRoleId   TEXT NOT NULL,
       text       TEXT NOT NULL,
+      kind       TEXT NOT NULL DEFAULT 'request' CHECK(kind IN ('request','response')),
+      inReplyTo  TEXT NULL,
       createdAt  TEXT NOT NULL,
       FOREIGN KEY (fromRoleId) REFERENCES roles(id),
       FOREIGN KEY (toRoleId)   REFERENCES roles(id)
     );
     CREATE INDEX IF NOT EXISTS idx_msg_from_time ON messages(fromRoleId, createdAt DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_msg_to_time   ON messages(toRoleId,   createdAt DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_msg_inreply   ON messages(inReplyTo);
 
     -- 信号 FTS：把 roles.signals(JSON) 拆成行式 role_signals 再喂给 FTS5
     CREATE TABLE IF NOT EXISTS role_signals ( roleId TEXT NOT NULL, signal TEXT NOT NULL );
     CREATE VIRTUAL TABLE IF NOT EXISTS role_signals_fts
-    USING fts5(signal, content='role_signals', content_rowid='rowid');
+      USING fts5(
+        signal,
+        content='role_signals',
+        content_rowid='rowid'
+      );
 
     CREATE TRIGGER IF NOT EXISTS role_signals_ai AFTER INSERT ON role_signals BEGIN
       INSERT INTO role_signals_fts(rowid, signal) VALUES (new.rowid, new.signal);
@@ -64,13 +72,17 @@ export function initDB() {
     END;
   `);
 
-  // 首次运行自动创建一些桌号（可用 SEED_TABLES 覆盖：例如 "24,12,25,23"）
+  // 兼容旧库：若缺列则补列
+  ensureColumn("messages", "kind",      "TEXT NOT NULL DEFAULT 'request'");
+  ensureColumn("messages", "inReplyTo", "TEXT NULL");
+
+  // 首次种子桌号
   const count = (db.prepare(`SELECT COUNT(*) AS c FROM tables`).get() as any).c as number;
   if (count === 0) {
     const ids = (process.env.SEED_TABLES ?? "24,12,23,25")
-      .split(",").map((s) => s.trim()).filter(Boolean);
+      .split(",").map(s => s.trim()).filter(Boolean);
     const insertTable = db.prepare(`INSERT INTO tables(id) VALUES (?)`);
-    const insertSeat = db.prepare(`INSERT INTO seats(tableId, seatIndex, roleId) VALUES (?, ?, NULL)`);
+    const insertSeat  = db.prepare(`INSERT INTO seats(tableId, seatIndex, roleId) VALUES (?, ?, NULL)`);
     const tx = db.transaction(() => {
       for (const id of ids) {
         insertTable.run(id);
@@ -98,10 +110,7 @@ export async function getTables(): Promise<TableRow[]> {
 
 export async function getRoles(): Promise<Role[]> {
   const rs = db.prepare(`SELECT * FROM roles`).all() as any[];
-  return rs.map((r) => ({
-    ...r,
-    signals: safeParse(r.signals, [] as string[]),
-  }));
+  return rs.map((r) => ({ ...r, signals: safeParse(r.signals, [] as string[]) }));
 }
 
 export async function findTable(id: string): Promise<TableRow | undefined> {
@@ -121,9 +130,9 @@ export async function createRole(r: Role) {
     const table = db.prepare(`SELECT id FROM tables WHERE id = ?`).get(r.tableId);
     if (!table) throw new Error("TABLE_NOT_FOUND");
 
-    const seat = db
-      .prepare(`SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`)
-      .get(r.tableId, seatIdx) as { roleId: string | null } | undefined;
+    const seat = db.prepare(
+      `SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`
+    ).get(r.tableId, seatIdx) as { roleId: string | null } | undefined;
 
     if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
     if (seat.roleId) throw new Error("SEAT_TAKEN");
@@ -132,22 +141,13 @@ export async function createRole(r: Role) {
       `INSERT INTO roles(id,name,avatar,signals,tableId,seatId,createdAt)
        VALUES (?,?,?,?,?,?,?)`
     ).run(
-      r.id,
-      r.name,
-      r.avatar,
-      JSON.stringify(r.signals ?? []),
-      r.tableId,
-      r.seatId,
-      r.createdAt
+      r.id, r.name, r.avatar, JSON.stringify(r.signals ?? []),
+      r.tableId, r.seatId, r.createdAt
     );
 
-    db.prepare(`UPDATE seats SET roleId = ? WHERE tableId = ? AND seatIndex = ?`).run(
-      r.id,
-      r.tableId,
-      seatIdx
-    );
+    db.prepare(`UPDATE seats SET roleId = ? WHERE tableId = ? AND seatIndex = ?`)
+      .run(r.id, r.tableId, seatIdx);
 
-    // 维护 role_signals + FTS
     replaceRoleSignals(r.id, r.signals ?? []);
   });
   tx();
@@ -155,31 +155,23 @@ export async function createRole(r: Role) {
 
 export async function deleteRole(roleId: string) {
   const tx = db.transaction(() => {
-    const r = db
-      .prepare(`SELECT tableId, seatId FROM roles WHERE id = ?`)
+    const r = db.prepare(`SELECT tableId, seatId FROM roles WHERE id = ?`)
       .get(roleId) as { tableId: string; seatId: number } | undefined;
     if (!r) return;
 
     db.prepare(`DELETE FROM roles WHERE id = ?`).run(roleId);
-    db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`).run(
-      r.tableId,
-      r.seatId - 1
-    );
+    db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
+      .run(r.tableId, r.seatId - 1);
 
-    // 清理 role_signals
     db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(roleId);
-    // messages 是否清理看需求；通常保留历史即可
   });
   tx();
 }
 
 export async function patchSignals(roleId: string, signals: string[]) {
-  const info = db
-    .prepare(`UPDATE roles SET signals = ? WHERE id = ?`)
+  const info = db.prepare(`UPDATE roles SET signals = ? WHERE id = ?`)
     .run(JSON.stringify(signals ?? []), roleId);
   if (info.changes === 0) throw new Error("ROLE_NOT_FOUND");
-
-  // 同步到 role_signals（FTS 触发器会自动更新索引）
   replaceRoleSignals(roleId, signals ?? []);
 }
 
@@ -193,14 +185,13 @@ export async function storeUpdateRole(
     if (!row) return false;
 
     const next = {
-      name: updates.name ?? row.name,
+      name:   updates.name   ?? row.name,
       avatar: updates.avatar ?? row.avatar,
       tableId: String(updates.tableId ?? row.tableId),
-      seatId: Number(updates.seatId ?? row.seatId),
+      seatId:  Number(updates.seatId  ?? row.seatId),
       signals: Array.isArray(updates.signals) ? updates.signals : safeParse(row.signals, [] as string[]),
     };
 
-    // 如果换桌或换座，做占用校验与 seats 迁移
     const moved = next.tableId !== row.tableId || next.seatId !== row.seatId;
     if (moved) {
       const seatIdxNew = next.seatId - 1;
@@ -209,38 +200,30 @@ export async function storeUpdateRole(
       const table = db.prepare(`SELECT id FROM tables WHERE id = ?`).get(next.tableId);
       if (!table) throw new Error("TABLE_NOT_FOUND");
 
-      const seat = db
-        .prepare(`SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`)
-        .get(next.tableId, seatIdxNew) as { roleId: string | null } | undefined;
+      const seat = db.prepare(
+        `SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`
+      ).get(next.tableId, seatIdxNew) as { roleId: string | null } | undefined;
+
       if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
       if (seat.roleId && seat.roleId !== roleId) throw new Error("SEAT_TAKEN");
 
-      // 释放旧座
+      // 释放旧座、占新座
       db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
         .run(row.tableId, row.seatId - 1);
-      // 占新座
       db.prepare(`UPDATE seats SET roleId = ? WHERE tableId = ? AND seatIndex = ?`)
         .run(roleId, next.tableId, seatIdxNew);
     }
 
-    // 更新角色表
     db.prepare(
       `UPDATE roles SET name=?, avatar=?, signals=?, tableId=?, seatId=? WHERE id=?`
     ).run(
-      next.name,
-      next.avatar,
-      JSON.stringify(next.signals ?? []),
-      next.tableId,
-      next.seatId,
-      roleId
+      next.name, next.avatar, JSON.stringify(next.signals ?? []),
+      next.tableId, next.seatId, roleId
     );
 
-    // 同步 role_signals
     replaceRoleSignals(roleId, next.signals ?? []);
-
     return true;
   });
-
   return tx();
 }
 
@@ -251,11 +234,9 @@ export async function searchRolesBySignalFTS(
 ): Promise<Array<{ role: { id: string; name: string; avatar: string }, tableId: string }>> {
   const terms = q.trim().split(/\s+/).filter(Boolean).map(normalizeSignal);
   if (!terms.length) return [];
-  // 前缀匹配：加 *；多词 AND
   const ftsQuery = terms.map(t => `${t}*`).join(" AND ");
 
-  const rows = db.prepare(
-    `
+  const rows = db.prepare(`
     SELECT r.id as id, r.name as name, r.avatar as avatar, r.tableId as tableId
     FROM role_signals_fts f
     JOIN role_signals  rs ON rs.rowid = f.rowid
@@ -263,20 +244,26 @@ export async function searchRolesBySignalFTS(
     WHERE f MATCH ?
     GROUP BY r.id
     LIMIT ?
-    `
-  ).all(ftsQuery, limit) as Array<{ id: string; name: string; avatar: string; tableId: string }>;
+  `).all(ftsQuery, limit) as Array<{ id: string; name: string; avatar: string; tableId: string }>;
 
   return rows.map(r => ({ role: { id: r.id, name: r.name, avatar: r.avatar }, tableId: r.tableId }));
 }
 
 /* -------------------- 消息：入库与分页查询（Keyset 游标） -------------------- */
-export async function addMessage(fromRoleId: string, toRoleId: string, text: string): Promise<string> {
+export async function addMessage(
+  fromRoleId: string,
+  toRoleId: string,
+  text: string,
+  kind: "request" | "response" = "request",
+  inReplyTo?: string
+): Promise<{ id: string; fromRoleId: string; toRoleId: string; text: string; kind: "request"|"response"; inReplyTo?: string; createdAt: string }> {
   const id = nanoid(10);
   const createdAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO messages(id, fromRoleId, toRoleId, text, createdAt) VALUES (?,?,?,?,?)`
-  ).run(id, fromRoleId, toRoleId, text, createdAt);
-  return id;
+    `INSERT INTO messages(id, fromRoleId, toRoleId, text, kind, inReplyTo, createdAt)
+     VALUES (?,?,?,?,?,?,?)`
+  ).run(id, fromRoleId, toRoleId, text, kind, inReplyTo ?? null, createdAt);
+  return { id, fromRoleId, toRoleId, text, kind, inReplyTo, createdAt };
 }
 
 export async function getMessagesSent(
@@ -291,9 +278,7 @@ export async function getMessagesSent(
     JOIN roles rto ON rto.id = m.toRoleId
     WHERE m.fromRoleId = ?
   `;
-  const cond = ts
-    ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))`
-    : ``;
+  const cond  = ts ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))` : ``;
   const order = `ORDER BY m.createdAt DESC, m.id DESC LIMIT ?`;
 
   const params: any[] = [roleId];
@@ -302,10 +287,7 @@ export async function getMessagesSent(
 
   const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
   const items = rows.map(r => ({
-    id: r.id,
-    to: { id: r.toId, name: r.toName },
-    text: r.text,
-    createdAt: r.createdAt,
+    id: r.id, to: { id: r.toId, name: r.toName }, text: r.text, createdAt: r.createdAt,
   }));
   const nextCursor = items.length === opt.limit
     ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
@@ -325,9 +307,7 @@ export async function getMessagesReceived(
     JOIN roles rfrom ON rfrom.id = m.fromRoleId
     WHERE m.toRoleId = ?
   `;
-  const cond = ts
-    ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))`
-    : ``;
+  const cond  = ts ? `AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))` : ``;
   const order = `ORDER BY m.createdAt DESC, m.id DESC LIMIT ?`;
 
   const params: any[] = [roleId];
@@ -336,10 +316,7 @@ export async function getMessagesReceived(
 
   const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
   const items = rows.map(r => ({
-    id: r.id,
-    from: { id: r.fromId, name: r.fromName },
-    text: r.text,
-    createdAt: r.createdAt,
+    id: r.id, from: { id: r.fromId, name: r.fromName }, text: r.text, createdAt: r.createdAt,
   }));
   const nextCursor = items.length === opt.limit
     ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
@@ -348,17 +325,18 @@ export async function getMessagesReceived(
 }
 
 /* -------------------- 小工具 -------------------- */
-function safeParse<T>(s: string, d: T): T {
-  try {
-    return JSON.parse(s) as T;
-  } catch {
-    return d;
+
+function ensureColumn(table: string, name: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+  if (!cols.some(c => c.name === name)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
 }
 
-function normalizeSignal(s: string) {
-  return s.trim().toLowerCase();
+function safeParse<T>(s: string, d: T): T {
+  try { return JSON.parse(s) as T; } catch { return d; }
 }
+function normalizeSignal(s: string) { return s.trim().toLowerCase(); }
 
 function replaceRoleSignals(roleId: string, signals: string[]) {
   const del = db.prepare(`DELETE FROM role_signals WHERE roleId = ?`);

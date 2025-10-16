@@ -87,8 +87,15 @@ const AVATARS: Avatar[] = RAW_FILES.map(parseFile).filter(Boolean) as Avatar[];
 export default function StatusSelect() {
   const nav = useNavigate();
   const { state } = useLocation() as { state?: { tableId?: string; seatId?: string } };
-  const tableId = state?.tableId;
-  const seatId  = state?.seatId;
+  const tableId = state?.tableId ?? null;
+  const seatId  = state?.seatId  ?? null;
+
+  // 如果没有上一步的信息，自动回到选桌/选座，防用户直接敲地址栏
+  useEffect(() => {
+    if (!tableId || !seatId) {
+      nav("/seat", { replace: true });
+    }
+  }, [tableId, seatId, nav]);
 
   // 筛选条件
   const [gender, setGender] = useState<Gender>("female");
@@ -130,14 +137,14 @@ export default function StatusSelect() {
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  });
+  }, []); // ← 只挂一次
 
   const prev = () => setIdx(i => (list.length ? (i - 1 + list.length) % list.length : 0));
   const next = () => setIdx(i => (list.length ? (i + 1) % list.length : 0));
 
   // 完成：带着头像去 Step 4
   const goNext = () => {
-    if (!cur) return;
+    if (!cur || !tableId || !seatId) return;
     nav("/signal", { state: { tableId, seatId, avatarSrc: cur.src } });
   };
 
@@ -197,19 +204,27 @@ export default function StatusSelect() {
 
           <div className="grid grid-cols-3 items-center">
             <Bubble size="lg" dim>
-              {list.length ? <img src={list[(idx - 1 + list.length) % list.length].src} alt="" className="w-full h-full object-contain rounded-full" /> : null}
+              {list.length ? (
+                <SafeImg src={list[(idx - 1 + list.length) % list.length].src} alt="" />
+              ) : null}
             </Bubble>
 
             <Bubble size="xl">
-              {cur ? <img src={cur.src} alt={`${cur.tone} ${cur.expr}`} className="w-full h-full object-contain rounded-full" /> : null}
+              {cur ? (
+                <SafeImg src={cur.src} alt={`${cur.tone} ${cur.expr}`} />
+              ) : null}
             </Bubble>
 
             <Bubble size="lg" dim>
-              {list.length ? <img src={list[(idx + 1) % list.length].src} alt="" className="w-full h-full object-contain rounded-full" /> : null}
+              {list.length ? (
+                <SafeImg src={list[(idx + 1) % list.length].src} alt="" />
+              ) : null}
             </Bubble>
           </div>
 
-          <div className="text-center mt-4 text-xl">{cur ? EXPR_LABEL[cur.expr] : "No result"}</div>
+          <div className="text-center mt-4 text-xl">
+            {cur ? EXPR_LABEL[cur.expr] : (list.length ? "Select one" : "No result")}
+          </div>
         </div>
       </section>
 
@@ -217,7 +232,7 @@ export default function StatusSelect() {
       <section className="px-4 pb-16 grid place-items-center">
         <button
           onClick={goNext}
-          disabled={!cur}
+          disabled={!cur || !tableId || !seatId}
           className="min-w-[180px] rounded-lg py-2 bg-brand-500 hover:bg-brand-700 disabled:opacity-50"
         >
           That’s It
@@ -286,5 +301,23 @@ function Bubble({ size, dim=false, children }: { size: "lg"|"xl"; dim?: boolean;
     >
       {children}
     </div>
+  );
+}
+
+/** 安全图片：加载失败时用一个通用头像兜底 */
+function SafeImg({ src, alt }: { src: string; alt?: string }) {
+  const [ok, setOk] = useState(true);
+  useEffect(() => { setOk(true); }, [src]);
+  if (!ok) {
+    return <div className="w-full h-full rounded-full grid place-items-center text-xs opacity-80">no image</div>;
+  }
+  return (
+    <img
+      src={src}
+      alt={alt ?? ""}
+      className="w-full h-full object-contain rounded-full select-none"
+      onError={() => setOk(false)}
+      draggable={false}
+    />
   );
 }

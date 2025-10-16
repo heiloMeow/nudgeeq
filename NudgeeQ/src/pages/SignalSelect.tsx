@@ -1,23 +1,27 @@
-// NudgeeQ/src/pages/SignalSelect.tsx
+// src/pages/SignalSelect.tsx
 import { useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-
 
 type SignalSide = "left" | "right";
 type SignalItem = { id: string; text: string; x: number; y: number; side: SignalSide };
 
 export default function SignalSelect() {
   const nav = useNavigate();
-  
+
   const { state } = useLocation() as {
     state?: { tableId?: string; seatId?: string; avatarSrc?: string };
   };
-  
-  const tableId = state?.tableId ?? "1";
-  const seatId = state?.seatId ?? "1";
+
+  const tableId = state?.tableId ?? null;
+  const seatId = state?.seatId ?? null;
   const avatarSrc = state?.avatarSrc ?? "/avatars/white-smile.png";
 
-  // 预置 signal（按三列分组，决定默认落点）
+  // 没有上一步信息就退回
+  useEffect(() => {
+    if (!tableId || !seatId) nav("/seat", { replace: true });
+  }, [tableId, seatId, nav]);
+
+  // 预置 signal（按三列分组决定默认落点）
   const presets = useMemo(
     () => ({
       left: [
@@ -27,7 +31,7 @@ export default function SignalSelect() {
         "You can borrow my calculator",
         "I have MacBook charger",
       ],
-      center: ["Feel free to seat here", "I am waiting for my friend", "Prefer to seat alone"],
+      center: ["Feel free to sit here", "I am waiting for my friend", "Prefer to sit alone"],
       right: ["Looking for study buddy", "Low energy, please be gentle", "Here if you need anytime"],
     }),
     []
@@ -57,9 +61,10 @@ export default function SignalSelect() {
   function bindDrag(sig: SignalItem) {
     return {
       onPointerDown: (e: React.PointerEvent) => {
+        e.preventDefault();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        const startX = e.clientX,
-          startY = e.clientY;
+        const startX = e.clientX;
+        const startY = e.clientY;
         const start = { x: sig.x, y: sig.y };
         const rect = stageRef.current!.getBoundingClientRect();
 
@@ -77,8 +82,8 @@ export default function SignalSelect() {
           window.removeEventListener("pointermove", onMove);
           window.removeEventListener("pointerup", onUp);
         };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointermove", onMove, { passive: true });
+        window.addEventListener("pointerup", onUp, { once: true });
       },
       onKeyDown: (e: React.KeyboardEvent) => {
         const step = e.shiftKey ? 10 : 4;
@@ -106,24 +111,27 @@ export default function SignalSelect() {
   }
 
   const done = () => {
-  const rect = stageRef.current?.getBoundingClientRect();
-  const w = rect?.width ?? 1;
-  const h = rect?.height ?? 1;
+    if (!tableId || !seatId) return;
+    const rect = stageRef.current?.getBoundingClientRect();
+    const w = rect?.width ?? 1;
+    const h = rect?.height ?? 1;
 
-  const normalized = signals.map(s => ({
-    id: s.id,
-    text: s.text,
-    nx: s.x / w,   // 0~1
-    ny: s.y / h,   // 0~1
-  }));
+    const normalized = signals.map((s) => ({
+      id: s.id,
+      text: s.text,
+      nx: +(s.x / w).toFixed(4), // 0~1
+      ny: +(s.y / h).toFixed(4),
+    }));
 
-  nav("/final", {
-    state: {
-      tableId, seatId, avatarSrc,
-      signals: normalized,   // 👈 传百分比
-    }
-  });
-};
+    nav("/final", {
+      state: {
+        tableId,
+        seatId,
+        avatarSrc,
+        signals: normalized, // Finalize.tsx 里仅提取 text[] 存后端
+      },
+    });
+  };
 
   return (
     <main
@@ -141,7 +149,7 @@ export default function SignalSelect() {
       />
 
       {/* 顶部：品牌 + 标题 + Done */}
-      <header className="px-7 py-6 flex items-center justify-between">
+      <header className="px-7 py-6 flex items-center justify-between relative z-10">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
 
         <div className="text-center grow">
@@ -157,7 +165,7 @@ export default function SignalSelect() {
         </button>
       </header>
 
-      {/* 左上角返回（保持样式统一，位置在左上） */}
+      {/* 左上角返回（样式统一） */}
       <button
         onClick={() => nav(-1)}
         className="
@@ -175,7 +183,7 @@ export default function SignalSelect() {
         <div
           ref={stageRef}
           className="relative z-10 w-full max-w-4xl h-[380px] md:h-[420px] rounded-2xl overflow-visible"
-          style={{ touchAction: "none" }}   // ✅ 禁止浏览器把手势当滚动/缩放
+          style={{ touchAction: "none" }} // 禁止浏览器把手势当滚动/缩放
           role="region"
           aria-label="Signal stage"
         >
@@ -191,20 +199,22 @@ export default function SignalSelect() {
             />
           ))}
 
-          {/* 中心头像 */}
+          {/* 中心头像 + 添加按钮 */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <div className="
-                  pointer-events-auto
-                  rounded-full grid place-items-center
-                  size-[180px] md:size-[220px]
-                  bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]
-                  shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]
-                  backdrop-blur-md
-                ">
-                  <img src={avatarSrc} alt="Selected avatar" className="w-[72%] h-[72%] object-contain select-none pointer-events-none" />
-                </div>
+            <div
+              className="
+                pointer-events-auto
+                rounded-full grid place-items-center
+                size-[180px] md:size-[220px]
+                bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]
+                shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]
+                backdrop-blur-md
+              "
+            >
+              <SafeImg src={avatarSrc} alt="Selected avatar" />
+            </div>
 
-                <div className="mt-4 grid place-items-center pointer-events-auto">
+            <div className="mt-4 grid place-items-center pointer-events-auto">
               {!adding ? (
                 <button
                   onClick={() => setAdding(true)}
@@ -242,24 +252,9 @@ export default function SignalSelect() {
 
       {/* 底部预制 */}
       <section className="px-6 pb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <PresetColumn
-          title=" "
-          colorDot="bg-pink-300"
-          items={presets.left}
-          onPick={(t) => addSignal(t, "left")}
-        />
-        <PresetColumn
-          title=" "
-          colorDot="bg-violet-300"
-          items={presets.center}
-          onPick={(t) => addSignal(t, "center")}
-        />
-        <PresetColumn
-          title=" "
-          colorDot="bg-rose-300"
-          items={presets.right}
-          onPick={(t) => addSignal(t, "right")}
-        />
+        <PresetColumn title=" " colorDot="bg-pink-300" items={presets.left} onPick={(t) => addSignal(t, "left")} />
+        <PresetColumn title=" " colorDot="bg-violet-300" items={presets.center} onPick={(t) => addSignal(t, "center")} />
+        <PresetColumn title=" " colorDot="bg-rose-300" items={presets.right} onPick={(t) => addSignal(t, "right")} />
       </section>
     </main>
   );
@@ -267,10 +262,9 @@ export default function SignalSelect() {
 
 /* ---------- 子组件们 ---------- */
 
-// 替换 src/pages/SignalSelect.tsx 里的 function SignalBubble(...) 整段
 function SignalBubble({
   text,
-  side,              // 保留但不再使用
+  side, // 目前未使用但保留
   style,
   onRemove,
   onPointerDown,
@@ -299,11 +293,10 @@ function SignalBubble({
         "backdrop-blur-xl text-white/95 shadow-[0_10px_28px_rgba(0,0,0,.35)] hover:shadow-[0_14px_34px_rgba(0,0,0,.45)]",
         "before:content-[''] before:absolute before:inset-0 before:rounded-2xl before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]",
       ].join(" ")}
-
     >
       <div className="pr-7 leading-snug tracking-wide">{text}</div>
 
-      {/* 关闭按钮：小圆片 */}
+      {/* 删除按钮 */}
       <button
         onClick={onRemove}
         className={[
@@ -319,7 +312,6 @@ function SignalBubble({
     </div>
   );
 }
-
 
 function PresetColumn({
   title,
@@ -341,16 +333,32 @@ function PresetColumn({
       <ul className="space-y-2">
         {items.map((t) => (
           <li key={t}>
-            <button
-              onClick={() => onPick(t)}
-              className="text-left w-full hover:underline"
-              aria-label={`Add: ${t}`}
-            >
+            <button onClick={() => onPick(t)} className="text-left w-full hover:underline" aria-label={`Add: ${t}`}>
               {t}
             </button>
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+/** 安全图片：加载失败时用占位兜底 */
+function SafeImg({ src, alt }: { src: string; alt?: string }) {
+  const [ok, setOk] = useState(true);
+  useEffect(() => {
+    setOk(true);
+  }, [src]);
+  if (!ok) {
+    return <div className="w-[72%] h-[72%] rounded-full grid place-items-center text-xs opacity-80">no image</div>;
+  }
+  return (
+    <img
+      src={src}
+      alt={alt ?? ""}
+      className="w-[72%] h-[72%] object-contain select-none pointer-events-none"
+      onError={() => setOk(false)}
+      draggable={false}
+    />
   );
 }

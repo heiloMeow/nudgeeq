@@ -5,12 +5,11 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 
 /**
- * API 约定（可按需修改）：
- *   GET  {API_BASE}/roles           -> RoleSummary[]
- *   // 统一落盘在“最后一步”由其它页面 POST：
- *   // POST {API_BASE}/roles        -> 保存完整创建数据（由最终步骤调用，不在本页）
+ * API 约定：
+ *   GET  {API_BASE}/roles?search=xx   -> RoleSummary[]
+ *   POST {API_BASE}/roles             -> 最终步骤去调用，这里不落盘
  */
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
 
 type RoleSummary = { id: string; name: string };
 
@@ -20,19 +19,19 @@ export default function RoleSelect() {
   const [name, setName] = useState("");
   const canSubmit = useMemo(() => name.trim().length > 0, [name]);
 
-  // 仅创建草稿，不落盘；最终由“最后一步”统一 POST
+  // 仅创建草稿，不落盘；最终由 Finalize 页面 POST /roles
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setDraftUser({ id: crypto.randomUUID(), name: name.trim() });
-    nav("/table"); // 下一步：选桌
+    nav("/table"); // 下一步选桌
   }
 
-  // 选择现有角色：直接成为正式用户；默认进入选桌
+  // 选择现有角色：直接成为正式用户；默认进入选桌（也可以跳到房间）
   function useExisting(role: RoleSummary) {
     setDraftUser(undefined);
     setUser({ id: role.id, name: role.name });
-    nav("/table"); // 若想直接进房，改成 nav("/room")
+    nav("/table"); // 若想直接进聊天：nav("/room", { state: { peerId: ... } })
   }
 
   return (
@@ -47,7 +46,7 @@ export default function RoleSelect() {
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
       </header>
 
-      {/* 居中“登录式”卡片 */}
+      {/* 登录式卡片 */}
       <section className="grow grid place-items-center px-4">
         <div
           className="
@@ -72,10 +71,7 @@ export default function RoleSelect() {
             <button
               type="submit"
               disabled={!canSubmit}
-              className="
-                mt-2 w-full rounded-lg py-2
-                bg-brand-500 hover:bg-brand-700 disabled:opacity-50
-              "
+              className="mt-2 w-full rounded-lg py-2 bg-brand-500 hover:bg-brand-700 disabled:opacity-50"
             >
               Continue
             </button>
@@ -83,19 +79,15 @@ export default function RoleSelect() {
 
           <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
 
-          {/* 打开“现有角色”弹窗 */}
+          {/* 现有角色弹窗 */}
           <ExistingRolesButton onPick={useExisting} />
         </div>
       </section>
 
-      {/* 右下角返回上一页（统一 Router 返回） */}
+      {/* 右下角返回 */}
       <button
         onClick={() => nav(-1)}
-        className="
-          fixed bottom-5 right-5 z-20 rounded-full
-          border border-white/30 bg-white/10 backdrop-blur
-          px-4 py-2 text-sm hover:bg-white/15
-        "
+        className="fixed bottom-5 right-5 z-20 rounded-full border border-white/30 bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15"
         aria-label="Back to previous page"
       >
         ← Back
@@ -104,7 +96,7 @@ export default function RoleSelect() {
   );
 }
 
-/* ============ 子组件：现有角色弹窗（从后端 JSON 拉取） ============ */
+/* ============ 子组件：现有角色弹窗（服务端搜索） ============ */
 
 function ExistingRolesButton({ onPick }: { onPick: (r: RoleSummary) => void }) {
   const [open, setOpen] = useState(false);
@@ -112,10 +104,7 @@ function ExistingRolesButton({ onPick }: { onPick: (r: RoleSummary) => void }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="
-          w-full rounded-lg py-2 border border-white/25 bg-white/10
-          hover:bg-white/15
-        "
+        className="w-full rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15"
       >
         Or choose an existing role
       </button>
@@ -132,32 +121,38 @@ function RolePicker({
   onPick: (r: RoleSummary) => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [q, setQ] = useState("");
   const [list, setList] = useState<RoleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
-  // 打开时获取后端角色列表（只需用户名/ID）
+  // 防抖搜索
   useEffect(() => {
     let alive = true;
-    (async () => {
-      setLoading(true);
-      setErr("");
+    const t = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE}/roles`, { headers: { Accept: "application/json" } });
+        setLoading(true);
+        setErr("");
+        const url =
+          q.trim().length > 0
+            ? `${API_BASE}/roles?search=${encodeURIComponent(q.trim())}`
+            : `${API_BASE}/roles`;
+        const res = await fetch(url, { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as RoleSummary[] | { items: RoleSummary[] };
         const items = Array.isArray(data) ? data : (data as any).items ?? [];
-        if (alive) setList(items);
+        if (alive) setList(items.slice(0, 20));
       } catch (e: any) {
         if (alive) setErr(e?.message ?? "Failed to fetch");
       } finally {
         if (alive) setLoading(false);
       }
-    })();
+    }, 300);
     return () => {
       alive = false;
+      clearTimeout(t);
     };
-  }, []);
+  }, [q]);
 
   // 关闭：Esc & 点击遮罩
   useEffect(() => {
@@ -198,14 +193,25 @@ function RolePicker({
           </button>
         </div>
 
+        {/* 搜索框 */}
+        <div className="mb-3">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by name…"
+            className="w-full rounded-lg bg-black/25 border border-white/25 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/40"
+            aria-label="Search roles"
+          />
+        </div>
+
         {loading ? (
           <div className="opacity-85">Loading…</div>
         ) : err ? (
           <div className="text-red-200">Error: {err}</div>
         ) : list.length === 0 ? (
-          <div className="opacity-85">No roles yet.</div>
+          <div className="opacity-85">No roles found.</div>
         ) : (
-          <ul className="grid sm:grid-cols-2 gap-2">
+          <ul className="grid sm:grid-cols-2 gap-2 max-h-[50vh] overflow-auto pr-1">
             {list.map((r) => (
               <li key={r.id}>
                 <button

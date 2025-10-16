@@ -11,8 +11,10 @@ import SignalSelect from "./pages/SignalSelect";
 import Finalize from "./pages/Finalize";
 import NearbyTables from "./pages/NearbyTables";
 
+
 // 全局 store（草稿用户等）
 import { useApp } from "./app/store";
+import ContactCompose from "./pages/ContactCompose";
 
 // 简单守卫：没创建草稿/未登录就不让走后续步骤
 function Guard({ children }: { children: React.ReactNode }) {
@@ -76,7 +78,8 @@ export default function App() {
           </Guard>
         }
       />
-      
+      <Route path="/contact" element={<ContactCompose />} />
+
       {/* 兜底重定向 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

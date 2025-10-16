@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API = API_BASE.endsWith("/api") ? API_BASE : `${API_BASE}/api`;
 
 /** 统一：最终页用“百分比定位”的信号 */
 type NormalizedSignal = { id: string; text: string; nx: number; ny: number };
@@ -69,32 +70,42 @@ export default function Finalize() {
   useEffect(() => {
     // 缺关键数据则回到起点
     if (!draftUser || !tableId || !seatId) nav("/role", { replace: true });
-  }, []);
+  }, [draftUser, tableId, seatId, nav]);
 
   async function handleSeekHelp() {
     if (!draftUser) return;
     setLoading(true); setErr("");
     try {
       const payload = {
-        id: draftUser.id,
         name: draftUser.name,
-        tableId,
-        seatId,
         avatar: avatarSrc,
-        // 用百分比提交，后端想存也更稳
-        signals: signals.map(s => ({ id: s.id, text: s.text, nx: s.nx, ny: s.ny })),
-        createdAt: new Date().toISOString(),
+        tableId: String(tableId),
+        seatId: Number(seatId),             // ✅ 后端 seatId 为 number
+        signals: signals.map(s => s.text),  // ✅ 只传文字
       };
 
-      {/*const res = await fetch(`${API_BASE}/roles`, {
+      const res = await fetch(`${API}/roles`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);*/}
 
-      commitUser();                 // ✅ 最终一步才真正落盘
-      nav("/nearby", { replace: true });
+      if (res.status === 409) { // 座位冲突
+        setErr("This seat was taken just now. Please pick another seat.");
+        // 回 SeatSelect 让用户重选
+        nav("/seat", { replace: true, state: { tableId } });
+        return;
+      }
+      if (res.status === 404) {
+        setErr("Table not found. Please re-select your table.");
+        nav("/table", { replace: true });
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      commitUser(); // ✅ 最终一步才真正落盘到全局
+      // 跳转附近桌子页，并把当前桌号带过去
+      nav("/nearby", { replace: true, state: { tableId } });
     } catch (e: any) {
       setErr(e?.message ?? "Submit failed");
     } finally {
@@ -148,12 +159,11 @@ export default function Finalize() {
           role="region"
           aria-label="Preview"
         >
-          {/* signals：按百分比定位，避免 Tailwind 动态类失效，用 style 设置 */}
           {signals.map((s) => (
             <SignalBubbleView key={s.id} text={s.text} nx={s.nx} ny={s.ny} />
           ))}
 
-          {/* 中心头像（从 180/220 放大到 315/385，即 ~75% 放大） */}
+          {/* 中心头像（放大约 75%） */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <div
               className="
@@ -184,7 +194,6 @@ export default function Finalize() {
           disabled={loading}
           className={[
             "relative min-w-[240px] px-6 py-3 rounded-2xl",
-            // 玻璃风 + 边框 + 高光
             "border border-white/30",
             "bg-[linear-gradient(180deg,rgba(255,255,255,.18)_0%,rgba(255,255,255,.08)_100%)]",
             "backdrop-blur-xl text-white text-lg font-semibold tracking-wide",
