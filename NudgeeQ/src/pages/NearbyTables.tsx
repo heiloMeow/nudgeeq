@@ -1,5 +1,5 @@
 // src/pages/NearbyTables.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 

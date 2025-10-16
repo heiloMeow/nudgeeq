@@ -3,7 +3,7 @@ import { useCallback, useState } from "react";
 import { useApp } from "../../app/store";
 import { useEventStream, type PushMessage } from "./useEventStream";
 import { IncomingModal } from "./IncomingModal";
-import Toasts, { useToasts } from "./Toasts";
+import { useToasts } from "./Toasts";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const REPLY_SORRY = "Sorry, I can’t help right now.";

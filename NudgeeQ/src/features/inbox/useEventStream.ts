@@ -1,5 +1,5 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 export type PushMessage = {
   id: string;
   fromRoleId: string;

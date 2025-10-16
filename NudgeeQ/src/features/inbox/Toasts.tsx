@@ -1,5 +1,4 @@
-import { useCallback, useRef, useState } from "react";
-
+import { useCallback, useState } from "react";
 type Toast = { id: string; text: string; fromRoleId?: string };
 
 export function useToasts() {

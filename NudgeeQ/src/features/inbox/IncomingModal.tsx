@@ -1,5 +1,5 @@
 // src/features/inbox/IncomingModal.tsx
-import React from "react";
+
 import type { IncomingItem } from "./useIncomingRequests";
 
 export function IncomingModal({

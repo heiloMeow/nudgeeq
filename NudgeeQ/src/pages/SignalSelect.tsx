@@ -192,7 +192,7 @@ export default function SignalSelect() {
             <SignalBubble
               key={s.id}
               text={s.text}
-              side={s.side}
+              _side={s.side}
               style={{ left: s.x, top: s.y, transform: "translate(-50%,-50%)" }}
               onRemove={() => removeSignal(s.id)}
               {...bindDrag(s)}
@@ -264,14 +264,13 @@ export default function SignalSelect() {
 
 function SignalBubble({
   text,
-  side, // 目前未使用但保留
   style,
   onRemove,
   onPointerDown,
   onKeyDown,
 }: {
   text: string;
-  side: "left" | "right";
+  _side: "left" | "right";
   style: React.CSSProperties;
   onRemove: () => void;
   onPointerDown: (e: React.PointerEvent) => void;

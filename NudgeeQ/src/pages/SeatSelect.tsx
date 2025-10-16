@@ -1,5 +1,5 @@
 // src/pages/SeatSelect.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo,useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
