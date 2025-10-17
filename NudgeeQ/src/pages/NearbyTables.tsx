@@ -80,7 +80,7 @@ export default function NearbyTables() {
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
 
   const onContact = (u: Occupant) => {
-    nav("/contact", { state: { peerId: u.id } });
+    nav("/contact", { state: { tableId: currentTableId, peerId: u.id, peerName: u.name } });
   };
 
   return (
