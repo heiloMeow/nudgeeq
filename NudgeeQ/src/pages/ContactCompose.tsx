@@ -1,3 +1,4 @@
+// src/pages/ContactCompose.tsx
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
@@ -24,7 +25,8 @@ export default function ContactCompose() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [text, setText] = useState("");
-  const canSend = !!user?.id && !!peer?.id && text.trim().length > 0;
+
+  const canSend = Boolean(user?.id && peer?.id && text.trim());
 
   useEffect(() => {
     if (!peerId) {
@@ -41,11 +43,11 @@ export default function ContactCompose() {
         const data = await res.json();
         if (!stop) {
           setPeer({
-            id: data.id,
-            name: data.name,
-            avatar: ensureAvatar(data.avatar),
-            tableId: data.tableId,
-            seatId: Number(data.seatId ?? 0) || undefined,
+            id: String(data.id),
+            name: String(data.name ?? "Unknown"),
+            avatar: ensureAvatar(String(data.avatar ?? "")),
+            tableId: data.tableId ? String(data.tableId) : undefined,
+            seatId: typeof data.seatId === "number" ? data.seatId : Number(data.seatId ?? 0) || undefined,
             signals: Array.isArray(data.signals) ? data.signals : [],
           });
         }
@@ -55,7 +57,9 @@ export default function ContactCompose() {
         if (!stop) setLoading(false);
       }
     })();
-    return () => { stop = true; };
+    return () => {
+      stop = true;
+    };
   }, [peerId, nav]);
 
   async function send() {
@@ -63,19 +67,24 @@ export default function ContactCompose() {
     try {
       setErr("");
       const payload = {
-        fromId: user!.id,
-        toId: peer!.id,
-        text: text.trim(),
-        // 可选上下文：用于后端做筛选/统计
-        context: { tableId: peer?.tableId, seatId: peer?.seatId },
+        fromRoleId: String(user!.id), // REQUIRED by backend
+        toRoleId: String(peer!.id),   // REQUIRED by backend
+        text: text.trim(),            // REQUIRED by backend
       };
+
       const res = await fetch(`${API}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // 成功后给个轻提示并返回上一页（或跳转到聊天页）
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const reason = j?.error ? ` - ${j.error}` : "";
+        throw new Error(`HTTP ${res.status}${reason}`);
+      }
+
+      setText("");
       alert("Message sent.");
       nav(-1);
     } catch (e: any) {
@@ -90,14 +99,14 @@ export default function ContactCompose() {
         bg-[radial-gradient(62%_70%_at_60%_0%,theme(colors.brand.300/.95),rgba(20,16,24,.92))]
       "
     >
-      {/* 背景细纹 */}
+      {/* Background texture */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[.10]
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
       />
 
-      {/* 顶部 */}
+      {/* Header */}
       <header className="px-7 py-6 flex items-center justify-between">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
         <h1 className="font-display text-[clamp(22px,4.6vw,36px)]">
@@ -112,9 +121,9 @@ export default function ContactCompose() {
         </button>
       </header>
 
-      {/* 主体：左右两列 */}
+      {/* Content */}
       <section className="grow grid grid-cols-1 lg:grid-cols-2 gap-6 px-6 pb-10">
-        {/* 左侧：接收方信息 */}
+        {/* Left: recipient info */}
         <div
           className="
             rounded-[24px] p-6 border border-white/14 bg-white/10 backdrop-blur-xl
@@ -146,7 +155,7 @@ export default function ContactCompose() {
                 </div>
               </div>
 
-              {/* signals 预览（只读气泡） */}
+              {/* Signals preview */}
               {peer.signals.length > 0 && (
                 <div className="mt-2 space-y-2">
                   {peer.signals.map((t, i) => (
@@ -169,7 +178,7 @@ export default function ContactCompose() {
           )}
         </div>
 
-        {/* 右侧：只保留编辑并发送 */}
+        {/* Right: compose and send */}
         <div
           className="
             rounded-[24px] p-6 border border-white/14 bg-white/10 backdrop-blur-xl

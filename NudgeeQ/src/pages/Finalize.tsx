@@ -6,10 +6,10 @@ import { useApp } from "../app/store";
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const API = API_BASE.endsWith("/api") ? API_BASE : `${API_BASE}/api`;
 
-/** 统一：最终页用“百分比定位”的信号 */
+/** Normalized (percentage-based) signal used by the final stage. */
 type NormalizedSignal = { id: string; text: string; nx: number; ny: number };
-/** 兼容：如果上一步还传了像素坐标，也能兜底转换 */
-type PixelSignal = { id: string; text: string; x: number; y: number; side?: "left"|"right" };
+/** Backward-compat: accept pixel-based signal and convert to percentages. */
+type PixelSignal = { id: string; text: string; x: number; y: number; side?: "left" | "right" };
 
 export default function Finalize() {
   const nav = useNavigate();
@@ -21,20 +21,21 @@ export default function Finalize() {
       signals?: Array<NormalizedSignal | PixelSignal>;
     };
   };
-  const { draftUser, user, commitUser } = useApp(); // 👈 同时拿到 user
+  const { draftUser, user, commitUser } = useApp();
 
-  const tableId   = state?.tableId   ?? "";
-  const seatIdStr = state?.seatId    ?? "";
+  const tableId = state?.tableId ?? "";
+  const seatIdStr = state?.seatId ?? "";
   const seatIdNum = Number(seatIdStr || 0);
-  const avatarSrc = state?.avatarSrc ?? "";
+  const avatarSrc = state?.avatarSrc || "/avatars/white-smile.png"; // fallback avatar
   const rawSignals = state?.signals ?? [];
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  /** 舞台尺寸（用于像素→百分比的兜底转换） */
+  /** Stage size (for pixel→percentage conversion). */
   const stageRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState({ w: 1, h: 1 });
+
   useLayoutEffect(() => {
     const update = () => {
       const r = stageRef.current?.getBoundingClientRect();
@@ -45,7 +46,7 @@ export default function Finalize() {
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  /** 归一化后的 signals：优先使用 nx/ny；若没有则用 x/y 与舞台尺寸兜底转换 */
+  /** Normalize signals: prefer nx/ny; otherwise convert x/y by stage size. */
   const signals = useMemo<NormalizedSignal[]>(() => {
     return rawSignals.map((s: any) => {
       if (typeof s.nx === "number" && typeof s.ny === "number") return s as NormalizedSignal;
@@ -55,20 +56,20 @@ export default function Finalize() {
     });
   }, [rawSignals, stageSize]);
 
-  /** 背景小圆点装饰 */
+  /** Decorative dots in background. */
   const dots = useMemo(
     () => [
       { left: "72%", top: "16%", size: 52, opacity: 0.25 },
       { left: "86%", top: "42%", size: 38, opacity: 0.22 },
       { left: "64%", top: "70%", size: 44, opacity: 0.18 },
       { left: "12%", top: "62%", size: 36, opacity: 0.22 },
-      { left: "18%", top: "28%", size: 28, opacity: 0.20 },
-      { left: "42%", top: "18%", size: 22, opacity: 0.20 },
+      { left: "18%", top: "28%", size: 28, opacity: 0.2 },
+      { left: "42%", top: "18%", size: 22, opacity: 0.2 },
     ],
     []
   );
 
-  // ✅ 改：允许 draftUser 或 user 任一存在即可进入；并且 tableId / seatId 必须存在
+  // Allow either draftUser or user to proceed; require tableId & seatId.
   useEffect(() => {
     if (!(draftUser || user) || !tableId || !seatIdNum) {
       nav("/role", { replace: true });
@@ -76,33 +77,35 @@ export default function Finalize() {
   }, [draftUser, user, tableId, seatIdNum, nav]);
 
   async function handleSeekHelp() {
-    const who = draftUser ?? user; // 统一用 who
+    const who = draftUser ?? user;
     if (!who) {
       nav("/role", { replace: true });
       return;
     }
-    setLoading(true); setErr("");
+
+    setLoading(true);
+    setErr("");
 
     try {
       const payload = {
         name: who.name,
         avatar: avatarSrc,
         tableId: String(tableId),
-        seatId: Number(seatIdNum),           // 后端 seatId 为 number
-        signals: signals.map(s => s.text),   // 只传文字
+        seatId: Number(seatIdNum),
+        signals: signals.map((s) => s.text),
       };
 
       let res: Response;
 
       if (draftUser) {
-        // 🆕 新建角色
+        // Create new role
         res = await fetch(`${API}/roles`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify(payload),
         });
       } else {
-        // ✏️ 已有角色：改资料/换桌/换座
+        // Update existing role (profile/signals/seat move)
         res = await fetch(`${API}/roles/${encodeURIComponent(user!.id)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -122,8 +125,15 @@ export default function Finalize() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      if (draftUser) commitUser(); // 只有新建时需要把草稿转正式
-      // 成功后去附近桌子页（带当前桌号，供 NearbyTables 高亮）
+      // IMPORTANT: when creating, persist the server-generated id for later (messaging etc.).
+      if (draftUser) {
+        const data = (await res.json().catch(() => ({}))) as { id?: string | number };
+        if (!data?.id) throw new Error("Missing server role id");
+        // If your store's commitUser signature differs, update the store accordingly.
+        commitUser({ id: String(data.id), name: who.name });
+      }
+
+      // Go to Nearby with the current table id for highlighting.
       nav("/nearby", { replace: true, state: { tableId } });
     } catch (e: any) {
       setErr(e?.message ?? "Submit failed");
@@ -139,21 +149,23 @@ export default function Finalize() {
         bg-[radial-gradient(62%_70%_at_60%_0%,theme(colors.brand.300/.95),rgba(20,16,24,.92))]
       "
     >
-      {/* 细纹底纹 */}
+      {/* Fine grain background */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[.10]
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
       />
-      {/* 装饰小圆点 */}
+      {/* Decorative dots */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
         {dots.map((d, i) => (
           <div
             key={i}
             className="absolute rounded-full bg-white"
             style={{
-              left: d.left, top: d.top,
-              width: d.size, height: d.size,
+              left: d.left,
+              top: d.top,
+              width: d.size,
+              height: d.size,
               opacity: d.opacity,
               filter: "blur(1px)",
               boxShadow: "0 6px 18px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.45)",
@@ -162,7 +174,7 @@ export default function Finalize() {
         ))}
       </div>
 
-      {/* 顶部品牌 + 桌号 */}
+      {/* Brand / Table label */}
       <header className="px-7 py-6 relative z-10">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
       </header>
@@ -170,7 +182,7 @@ export default function Finalize() {
         {tableId ? `Table ${tableId}` : "Ready"}
       </h1>
 
-      {/* 舞台：保留 signal（同位置渲染） + 放大头像 */}
+      {/* Stage: render signals at normalized positions + avatar spotlight */}
       <section className="grow grid place-items-center px-4 relative z-10">
         <div
           ref={stageRef}
@@ -182,7 +194,7 @@ export default function Finalize() {
             <SignalBubbleView key={s.id} text={s.text} nx={s.nx} ny={s.ny} />
           ))}
 
-          {/* 中心头像（放大约 75%） */}
+          {/* Center avatar */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <div
               className="
@@ -208,7 +220,7 @@ export default function Finalize() {
         </div>
       </section>
 
-      {/* 中央唯一按钮：Seek Help = 最终创建/更新 */}
+      {/* Primary action */}
       <section className="px-4 pb-10 grid place-items-center relative z-10">
         <button
           onClick={handleSeekHelp}
@@ -229,7 +241,7 @@ export default function Finalize() {
         {err && <div className="mt-3 text-red-200 text-sm">{err}</div>}
       </section>
 
-      {/* 右下角返回（与前面一致） */}
+      {/* Back button */}
       <button
         onClick={() => nav(-1)}
         className="
@@ -245,7 +257,7 @@ export default function Finalize() {
   );
 }
 
-/* ========== 只读气泡（无尾巴） ========== */
+/** Readonly bubble (without tail). */
 function SignalBubbleView({ text, nx, ny }: { text: string; nx: number; ny: number }) {
   return (
     <div
@@ -258,7 +270,7 @@ function SignalBubbleView({ text, nx, ny }: { text: string; nx: number; ny: numb
                  before:shadow-[inset_0_1px_0_rgba(255,255,255,.45)]"
       style={{
         left: `${(nx * 100).toFixed(2)}%`,
-        top:  `${(ny * 100).toFixed(2)}%`,
+        top: `${(ny * 100).toFixed(2)}%`,
         transform: "translate(-50%, -50%)",
       }}
     >

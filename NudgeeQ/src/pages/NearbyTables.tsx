@@ -3,14 +3,16 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API = API_BASE.endsWith("/api") ? API_BASE : `${API_BASE}/api`;
 
 type Occupant = {
   id: string;
   name: string;
-  avatar: string;    // /avatars/xxx.png 或完整 URL
-  signals: string[]; // e.g. ["cable","study buddy"]
+  avatar: string;    // "/avatars/xxx.png" or full URL
+  signals: string[]; // e.g. ["cable", "study buddy"]
 };
+
 type TableData = {
   id: number | string;
   seats: (Occupant | null)[];
@@ -21,7 +23,7 @@ export default function NearbyTables() {
   const { state } = useLocation() as { state?: { tableId?: string | number } };
   const { tableId: fromStore } = useApp().room ?? ({} as any);
 
-  // 当前桌号：优先路由 state，其次全局 store
+  // Current table id: prefer route state, then global store, fallback to "1"
   const currentTableId = String(state?.tableId ?? fromStore ?? "1");
 
   const [query, setQuery] = useState("");
@@ -29,14 +31,14 @@ export default function NearbyTables() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // 高亮命中：来自后端 FTS 搜索的 roleId 集合
+  // Highlighted hits: role ids returned from /search/signals
   const [hitIds, setHitIds] = useState<Set<string>>(new Set());
 
   async function fetchNearbyTables() {
     try {
       setError("");
       setLoading(true);
-      const url = `${API_BASE}/tables?near=${encodeURIComponent(currentTableId)}&limit=5`;
+      const url = `${API}/tables?near=${encodeURIComponent(currentTableId)}&limit=5`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: TableData[] = await res.json();
@@ -53,7 +55,7 @@ export default function NearbyTables() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTableId]);
 
-  // 搜索：调用后端 /search/signals?q=xxx，返回命中角色 id 列表用于高亮
+  // Search & highlight: call /search/signals?q=xxx and collect role ids
   useEffect(() => {
     let stopped = false;
     const t = setTimeout(async () => {
@@ -63,14 +65,29 @@ export default function NearbyTables() {
         return;
       }
       try {
-        const res = await fetch(`${API_BASE}/search/signals?q=${encodeURIComponent(q)}&limit=50`);
+        const res = await fetch(`${API}/search/signals?q=${encodeURIComponent(q)}&limit=50`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const rows: Array<{ role: { id: string } }> = await res.json();
-        if (!stopped) setHitIds(new Set(rows.map((r) => r.role.id)));
+        const rows: Array<any> = await res.json();
+
+        // Be liberal in what we accept:
+        //  - { roleId: "..." }
+        //  - { role: { id: "..." } }
+        //  - { role: "..." }
+        //  - { id: "..." }
+        const ids = new Set<string>();
+        for (const r of rows) {
+          const id =
+            (typeof r.role === "object" && r.role?.id) ||
+            (typeof r.role === "string" && r.role) ||
+            r.roleId ||
+            r.id;
+          if (id) ids.add(String(id));
+        }
+        if (!stopped) setHitIds(ids);
       } catch {
         if (!stopped) setHitIds(new Set());
       }
-    }, 250); // 防抖
+    }, 250); // debounce
     return () => {
       stopped = true;
       clearTimeout(t);
@@ -90,9 +107,12 @@ export default function NearbyTables() {
         bg-[radial-gradient(62%_70%_at_60%_0%,theme(colors.brand.300/.95),rgba(20,16,24,.92))]
       "
     >
-      {/* 背景细纹 */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[.10]
-                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]" />
+      {/* Background texture */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[.10]
+                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
+      />
 
       {/* Header */}
       <header className="px-7 pt-6 pb-2 flex items-center gap-3">
@@ -215,13 +235,13 @@ function TableCard({
       "
     >
       <div className="relative mx-auto w-full max-w-4xl h-[200px] md:h-[220px]">
-        {/* left column */}
+        {/* Left column */}
         <div className="absolute -left-[56px] top-6 bottom-6 flex flex-col items-center justify-between gap-3">
           {left.map((occ, i) => (
             <SeatAvatar
               key={`L${i}`}
               occ={occ}
-              active={!!occ && occ.id === activeUserId}
+              active={!!occ && occ?.id === activeUserId}
               highlighted={!!(occ && hitIds.has(occ.id))}
               onToggle={() => setActiveUserId(occ ? (activeUserId === occ.id ? null : occ.id) : null)}
               onContact={onContact}
@@ -230,20 +250,20 @@ function TableCard({
           ))}
         </div>
 
-        {/* tabletop */}
+        {/* Table top */}
         <div className="h-full rounded-[20px] bg-white/8 border border-white/20 relative overflow-visible">
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
             <span className="font-display text-[52px] md:text-[64px] text-white/12 select-none">#{tableId}</span>
           </div>
         </div>
 
-        {/* right column */}
+        {/* Right column */}
         <div className="absolute -right-[56px] top-6 bottom-6 flex flex-col items-center justify-between gap-3">
           {right.map((occ, i) => (
             <SeatAvatar
               key={`R${i}`}
               occ={occ}
-              active={!!occ && occ.id === activeUserId}
+              active={!!occ && occ?.id === activeUserId}
               highlighted={!!(occ && hitIds.has(occ.id))}
               onToggle={() => setActiveUserId(occ ? (activeUserId === occ.id ? null : occ.id) : null)}
               onContact={onContact}
@@ -271,7 +291,11 @@ function SeatAvatar({
   onContact: (u: Occupant) => void;
   side: "left" | "right";
 }) {
-  if (!occ) return <div className="size-[64px] rounded-full border border-white/25 bg-white/10 backdrop-blur-sm" />;
+  if (!occ) {
+    return (
+      <div className="size-[64px] rounded-full border border-white/25 bg-white/10 backdrop-blur-sm" />
+    );
+  }
 
   return (
     <div className="relative">

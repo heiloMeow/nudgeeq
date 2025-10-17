@@ -225,13 +225,28 @@ api.get("/roles/:id/messages/received", async (req, res) => {
 /** REST 发送消息（WS 离线兜底 / ContactCompose 发送）：POST /api/messages
  *  body: { fromRoleId: string, toRoleId: string, text: string }
  */
+/** REST send message (fallback when WS is offline) */
 api.post("/messages", express.json(), async (req, res) => {
   const { fromRoleId, toRoleId, text } = req.body ?? {};
   if (!fromRoleId || !toRoleId || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "MISSING_FIELDS" });
   }
   try {
+    // A) existence check to avoid orphan messages
+    const roles = await getRoles();
+    const fromOk = roles.some(r => r.id === String(fromRoleId));
+    const toOk   = roles.some(r => r.id === String(toRoleId));
+    if (!fromOk || !toOk) return res.status(404).json({ error: "ROLE_NOT_FOUND" });
+
     const id = await addMessage(String(fromRoleId), String(toRoleId), text.trim());
+
+    // B) optional SSE publish (require events.ts helpers)
+    try {
+      const { publish } = await import("./events.js");
+      publish(String(toRoleId),   "message", { id, dir: "in",  fromRoleId, toRoleId, text: text.trim() });
+      publish(String(fromRoleId), "message", { id, dir: "out", fromRoleId, toRoleId, text: text.trim() });
+    } catch { /* SSE not wired; ignore silently */ }
+
     res.status(201).json({ id });
   } catch (e) {
     console.error(e);

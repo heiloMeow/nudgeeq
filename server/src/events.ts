@@ -1,50 +1,106 @@
 // server/src/events.ts
 import type { Response } from "express";
 
-type Sub = { res: Response; roleId: string; alive: boolean; lastBeat: number };
-const subs = new Map<string, Set<Sub>>(); // roleId -> set of connections
+type Sub = {
+  res: Response;
+  roleId: string;
+  alive: boolean;
+  lastBeat: number;
+};
 
-export function subscribe(roleId: string, res: Response) {
-  const s: Sub = { res, roleId, alive: true, lastBeat: Date.now() };
-  if (!subs.has(roleId)) subs.set(roleId, new Set());
-  subs.get(roleId)!.add(s);
+const channels = new Map<string, Set<Sub>>(); // roleId -> set of subscriptions
 
-  // 基本 SSE 头
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  // 心跳
-  const timer = setInterval(() => {
-    if (!s.alive) return clearInterval(timer);
-    try {
-      res.write(`event: ping\ndata: ${Date.now()}\n\n`);
-    } catch {
-      s.alive = false;
-      subs.get(roleId)?.delete(s);
-      clearInterval(timer);
-    }
-  }, 15000);
-
-  reqOnClose(res, () => {
-    s.alive = false;
-    subs.get(roleId)?.delete(s);
-    clearInterval(timer);
-  });
+function ensureChannel(roleId: string): Set<Sub> {
+  let set = channels.get(roleId);
+  if (!set) {
+    set = new Set();
+    channels.set(roleId, set);
+  }
+  return set;
 }
 
-export function publish(toRoleId: string, event: string, payload: unknown) {
-  const set = subs.get(toRoleId);
-  if (!set || set.size === 0) return;
-  const data = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const s of set) {
-    if (!s.alive) continue;
-    try { s.res.write(data); } catch { s.alive = false; }
+function removeSub(s: Sub) {
+  const set = channels.get(s.roleId);
+  if (set) {
+    set.delete(s);
+    if (set.size === 0) channels.delete(s.roleId);
   }
 }
 
-function reqOnClose(res: Response, cb: () => void) {
-  // @ts-ignore
-  res.on("close", cb);
+export function subscribe(roleId: string, res: Response) {
+  // Basic validation
+  if (!roleId) {
+    res.status(400).json({ error: "roleId required" });
+    return;
+  }
+
+  const s: Sub = { res, roleId, alive: true, lastBeat: Date.now() };
+  ensureChannel(roleId).add(s);
+
+  // Important SSE headers
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform"); // prevent proxies from buffering
+  res.setHeader("Connection", "keep-alive");
+  // If you need CORS for different domains, set this (or rely on app-level CORS middleware)
+  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN ?? "*");
+  // If you are behind Nginx, disable proxy buffering (Caddy usually OK without this)
+  res.setHeader("X-Accel-Buffering", "no");
+
+  // Flush headers early
+  (res as any).flushHeaders?.();
+
+  // Kick the stream so browsers mark it as "open"
+  try {
+    res.write(`: connected ${Date.now()}\n\n`);
+    // Optional: client reconnection backoff (ms)
+    res.write(`retry: 10000\n\n`);
+  } catch {
+    s.alive = false;
+    removeSub(s);
+    return;
+  }
+
+  // Heartbeat
+  const timer = setInterval(() => {
+    if (!s.alive) {
+      clearInterval(timer);
+      return;
+    }
+    try {
+      res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+      s.lastBeat = Date.now();
+    } catch {
+      s.alive = false;
+      clearInterval(timer);
+      removeSub(s);
+    }
+  }, 15000);
+
+  // Cleanup on close/finish/error
+  const cleanup = () => {
+    if (!s.alive) return;
+    s.alive = false;
+    clearInterval(timer);
+    removeSub(s);
+  };
+
+  res.on("close", cleanup);
+  res.on("finish", cleanup);
+  res.on("error", cleanup);
+}
+
+export function publish(toRoleId: string, event: string, payload: unknown) {
+  const set = channels.get(toRoleId);
+  if (!set || set.size === 0) return;
+  const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const s of set) {
+    if (!s.alive) continue;
+    try {
+      s.res.write(frame);
+    } catch {
+      s.alive = false;
+      removeSub(s);
+    }
+  }
 }
