@@ -21,10 +21,11 @@ export default function Finalize() {
       signals?: Array<NormalizedSignal | PixelSignal>;
     };
   };
-  const { draftUser, commitUser } = useApp();
+  const { draftUser, user, commitUser } = useApp(); // 👈 同时拿到 user
 
-  const tableId = state?.tableId ?? "";
-  const seatId  = state?.seatId ?? "";
+  const tableId   = state?.tableId   ?? "";
+  const seatIdStr = state?.seatId    ?? "";
+  const seatIdNum = Number(seatIdStr || 0);
   const avatarSrc = state?.avatarSrc ?? "";
   const rawSignals = state?.signals ?? [];
 
@@ -67,32 +68,50 @@ export default function Finalize() {
     []
   );
 
+  // ✅ 改：允许 draftUser 或 user 任一存在即可进入；并且 tableId / seatId 必须存在
   useEffect(() => {
-    // 缺关键数据则回到起点
-    if (!draftUser || !tableId || !seatId) nav("/role", { replace: true });
-  }, [draftUser, tableId, seatId, nav]);
+    if (!(draftUser || user) || !tableId || !seatIdNum) {
+      nav("/role", { replace: true });
+    }
+  }, [draftUser, user, tableId, seatIdNum, nav]);
 
   async function handleSeekHelp() {
-    if (!draftUser) return;
+    const who = draftUser ?? user; // 统一用 who
+    if (!who) {
+      nav("/role", { replace: true });
+      return;
+    }
     setLoading(true); setErr("");
+
     try {
       const payload = {
-        name: draftUser.name,
+        name: who.name,
         avatar: avatarSrc,
         tableId: String(tableId),
-        seatId: Number(seatId),             // ✅ 后端 seatId 为 number
-        signals: signals.map(s => s.text),  // ✅ 只传文字
+        seatId: Number(seatIdNum),           // 后端 seatId 为 number
+        signals: signals.map(s => s.text),   // 只传文字
       };
 
-      const res = await fetch(`${API}/roles`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
 
-      if (res.status === 409) { // 座位冲突
+      if (draftUser) {
+        // 🆕 新建角色
+        res = await fetch(`${API}/roles`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        // ✏️ 已有角色：改资料/换桌/换座
+        res = await fetch(`${API}/roles/${encodeURIComponent(user!.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (res.status === 409) {
         setErr("This seat was taken just now. Please pick another seat.");
-        // 回 SeatSelect 让用户重选
         nav("/seat", { replace: true, state: { tableId } });
         return;
       }
@@ -103,8 +122,8 @@ export default function Finalize() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      commitUser(); // ✅ 最终一步才真正落盘到全局
-      // 跳转附近桌子页，并把当前桌号带过去
+      if (draftUser) commitUser(); // 只有新建时需要把草稿转正式
+      // 成功后去附近桌子页（带当前桌号，供 NearbyTables 高亮）
       nav("/nearby", { replace: true, state: { tableId } });
     } catch (e: any) {
       setErr(e?.message ?? "Submit failed");
@@ -182,12 +201,14 @@ export default function Finalize() {
                 />
               ) : null}
             </div>
-            <div className="mt-3 text-xl opacity-90 text-center">{draftUser?.name}</div>
+            <div className="mt-3 text-xl opacity-90 text-center">
+              {(draftUser?.name ?? user?.name) || ""}
+            </div>
           </div>
         </div>
       </section>
 
-      {/* 中央唯一按钮：Seek Help = 最终创建 */}
+      {/* 中央唯一按钮：Seek Help = 最终创建/更新 */}
       <section className="px-4 pb-10 grid place-items-center relative z-10">
         <button
           onClick={handleSeekHelp}
