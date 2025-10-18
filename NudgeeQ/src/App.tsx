@@ -10,7 +10,7 @@ import StatusSelect from "./pages/StatusSelect";
 import SignalSelect from "./pages/SignalSelect";
 import Finalize from "./pages/Finalize";
 import NearbyTables from "./pages/NearbyTables";
-
+import IncomingRequestGate from "./features/inbox/IncomingRequestGate";
 
 // 全局 store（草稿用户等）
 import { useApp } from "./app/store";
@@ -24,6 +24,8 @@ function Guard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
+    <>
+      <IncomingRequestGate />
     <Routes>
       {/* 首页 */}
       <Route path="/" element={<Home />} />
@@ -83,5 +85,6 @@ export default function App() {
       {/* 兜底重定向 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }

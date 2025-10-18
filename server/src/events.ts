@@ -42,10 +42,8 @@ export function subscribe(roleId: string, res: Response) {
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform"); // prevent proxies from buffering
   res.setHeader("Connection", "keep-alive");
-  // If you need CORS for different domains, set this (or rely on app-level CORS middleware)
-  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN ?? "*");
-  // If you are behind Nginx, disable proxy buffering (Caddy usually OK without this)
-  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN ?? "*"); // or rely on app-level CORS
+  res.setHeader("X-Accel-Buffering", "no"); // hint for Nginx to disable buffering
 
   // Flush headers early
   (res as any).flushHeaders?.();
@@ -53,7 +51,7 @@ export function subscribe(roleId: string, res: Response) {
   // Kick the stream so browsers mark it as "open"
   try {
     res.write(`: connected ${Date.now()}\n\n`);
-    // Optional: client reconnection backoff (ms)
+    // Client reconnection backoff (ms)
     res.write(`retry: 10000\n\n`);
   } catch {
     s.alive = false;

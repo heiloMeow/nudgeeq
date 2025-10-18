@@ -153,20 +153,67 @@ export async function createRole(r: Role) {
   tx();
 }
 
-export async function deleteRole(roleId: string) {
-  const tx = db.transaction(() => {
-    const r = db.prepare(`SELECT tableId, seatId FROM roles WHERE id = ?`)
-      .get(roleId) as { tableId: string; seatId: number } | undefined;
-    if (!r) return;
-
-    db.prepare(`DELETE FROM roles WHERE id = ?`).run(roleId);
-    db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
-      .run(r.tableId, r.seatId - 1);
-
-    db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(roleId);
-  });
-  tx();
+// ---------- put near other helpers ----------
+function getTableColumns(table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(rows.map(r => r.name));
 }
+
+function findSeatColumnName(columns: Set<string>, seatId: number): string | undefined {
+  const candidates = [`seat${seatId}`, `seat_${seatId}`];
+  return candidates.find(c => columns.has(c));
+}
+
+// ---------- replace your deleteRole with this version ----------
+
+// lazily created transaction to avoid calling db.transaction() before initDB()
+let _txDeleteRole: ((roleId: string) => void) | null = null;
+
+export function deleteRole(roleId: string) {
+  if (!_txDeleteRole) {
+    if (!db) throw new Error("DB_NOT_INITIALIZED");
+
+    _txDeleteRole = db.transaction((rid: string) => {
+      // 读取当前角色，拿到 tableId/seatId 准备释放座位
+      const r = db.prepare(`
+        SELECT id, tableId, seatId
+        FROM roles
+        WHERE id = ?
+      `).get(rid) as { id: string; tableId?: string; seatId?: number } | undefined;
+
+      // 1) 释放座位（根据实际表结构动态选择 JSON or 列式）
+      if (r?.tableId && r?.seatId) {
+        const cols = getTableColumns("tables");
+
+        if (cols.has("seats")) {
+          // JSON 数组结构：tables.seats = [roleId|null,...]
+          db.prepare(`
+            UPDATE tables
+            SET seats = json_set(seats, '$[' || (? - 1) || ']', NULL)
+            WHERE id = ?
+          `).run(r.seatId, r.tableId);
+        } else {
+          // 列式结构：seat1..seat6 或 seat_1..seat_6
+          const seatCol = findSeatColumnName(cols, r.seatId);
+          if (seatCol) {
+            db.prepare(`UPDATE tables SET ${seatCol} = NULL WHERE id = ?`).run(r.tableId);
+          }
+          // 如果既没有 seats 也没有 seatN，就无事可做（容忍不同 schema）
+        }
+      }
+
+      // 2) 先删消息，避免外键拦截
+      db.prepare(`DELETE FROM messages WHERE fromRoleId = ? OR toRoleId = ?`).run(rid, rid);
+
+      // 3) 再删角色
+      db.prepare(`DELETE FROM roles WHERE id = ?`).run(rid);
+    });
+  }
+
+  _txDeleteRole(roleId);
+}
+
+
 
 export async function patchSignals(roleId: string, signals: string[]) {
   const info = db.prepare(`UPDATE roles SET signals = ? WHERE id = ?`)
@@ -228,26 +275,51 @@ export async function storeUpdateRole(
 }
 
 /* -------------------- FTS 搜索（signal -> 角色+桌号） -------------------- */
-export async function searchRolesBySignalFTS(
-  q: string,
-  limit: number
-): Promise<Array<{ role: { id: string; name: string; avatar: string }, tableId: string }>> {
-  const terms = q.trim().split(/\s+/).filter(Boolean).map(normalizeSignal);
-  if (!terms.length) return [];
-  const ftsQuery = terms.map(t => `${t}*`).join(" AND ");
+// 安全的 signals 关键词搜索（不依赖 FTS，使用 JSON1 + LIKE）
+// 安全的 signals 关键词搜索（JSON1 + LIKE，参数化；不依赖 FTS 表）
+export function searchRolesBySignalFTS(q: string, limit: number) {
+  const terms = String(q || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 
-  const rows = db.prepare(`
-    SELECT r.id as id, r.name as name, r.avatar as avatar, r.tableId as tableId
-    FROM role_signals_fts f
-    JOIN role_signals  rs ON rs.rowid = f.rowid
-    JOIN roles         r  ON r.id     = rs.roleId
-    WHERE f MATCH ?
-    GROUP BY r.id
-    LIMIT ?
-  `).all(ftsQuery, limit) as Array<{ id: string; name: string; avatar: string; tableId: string }>;
+  if (terms.length === 0) return [];
 
-  return rows.map(r => ({ role: { id: r.id, name: r.name, avatar: r.avatar }, tableId: r.tableId }));
+  // 每个词都变成一个 EXISTS 子句；OR = 命中任意词即可（需要“全都命中”就把 OR 改 AND）
+  const wheres = terms.map(
+    () => `EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(r.signals, '[]'))
+              WHERE CAST(json_each.value AS TEXT) LIKE ?
+           )`
+  );
+
+  const sql = `
+    SELECT r.id, r.name, r.avatar, r.tableId, r.seatId, r.createdAt
+    FROM roles r
+    WHERE ${wheres.join(" OR ")}
+    ORDER BY datetime(r.createdAt) DESC
+    LIMIT ?;
+  `;
+
+  const params = [
+    ...terms.map(t => `%${t}%`),
+    Math.max(1, Math.min(100, Number(limit) || 30)),
+  ];
+
+  const rows = db.prepare(sql).all(...params) as Array<{
+    id: string; name: string; avatar: string; tableId: string; seatId?: number; createdAt?: string;
+  }>;
+
+  // 与 /api/search/signals 期望结构对齐
+  return rows.map(r => ({
+    role: { id: r.id, name: r.name, avatar: r.avatar },
+    tableId: r.tableId,
+    seatId: r.seatId,
+  }));
 }
+
+
 
 /* -------------------- 消息：入库与分页查询（Keyset 游标） -------------------- */
 export async function addMessage(
@@ -269,11 +341,32 @@ export async function addMessage(
 export async function getMessagesSent(
   roleId: string,
   opt: { cursor?: string; limit: number }
-): Promise<{ items: Array<{ id: string; to: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }> {
+): Promise<{
+  items: Array<{
+    id: string;
+    to: { id: string; name: string };
+    text: string;
+    createdAt: string;
+    // ↓ 新增：前端刷新后也能还原
+    fromRoleId: string;
+    toRoleId: string;
+    kind: "request" | "response";
+    inReplyTo?: string | null;
+  }>;
+  nextCursor?: string;
+}> {
   const { ts, lastId } = parseCursor(opt.cursor);
   const base = `
-    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
-           rto.id as toId, rto.name as toName
+    SELECT
+      m.id           AS id,
+      m.text         AS text,
+      m.createdAt    AS createdAt,
+      m.kind         AS kind,
+      m.inReplyTo    AS inReplyTo,
+      m.fromRoleId   AS fromRoleId,
+      m.toRoleId     AS toRoleId,
+      rto.id         AS toId,
+      rto.name       AS toName
     FROM messages m
     JOIN roles rto ON rto.id = m.toRoleId
     WHERE m.fromRoleId = ?
@@ -287,22 +380,53 @@ export async function getMessagesSent(
 
   const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
   const items = rows.map(r => ({
-    id: r.id, to: { id: r.toId, name: r.toName }, text: r.text, createdAt: r.createdAt,
+    id: r.id,
+    to: { id: r.toId, name: r.toName },
+    text: r.text,
+    createdAt: r.createdAt,
+    // 新增的扁平字段
+    fromRoleId: r.fromRoleId,
+    toRoleId: r.toRoleId,
+    kind: r.kind as "request" | "response",
+    inReplyTo: r.inReplyTo ?? null,
   }));
-  const nextCursor = items.length === opt.limit
-    ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
-    : undefined;
+  const nextCursor =
+    items.length === opt.limit
+      ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
+      : undefined;
   return { items, nextCursor };
 }
+
 
 export async function getMessagesReceived(
   roleId: string,
   opt: { cursor?: string; limit: number }
-): Promise<{ items: Array<{ id: string; from: {id:string; name:string}; text: string; createdAt: string }>, nextCursor?: string }> {
+): Promise<{
+  items: Array<{
+    id: string;
+    from: { id: string; name: string };
+    text: string;
+    createdAt: string;
+    // ↓ 新增：前端刷新后也能还原
+    fromRoleId: string;
+    toRoleId: string;
+    kind: "request" | "response";
+    inReplyTo?: string | null;
+  }>;
+  nextCursor?: string;
+}> {
   const { ts, lastId } = parseCursor(opt.cursor);
   const base = `
-    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
-           rfrom.id as fromId, rfrom.name as fromName
+    SELECT
+      m.id           AS id,
+      m.text         AS text,
+      m.createdAt    AS createdAt,
+      m.kind         AS kind,
+      m.inReplyTo    AS inReplyTo,
+      m.fromRoleId   AS fromRoleId,
+      m.toRoleId     AS toRoleId,
+      rfrom.id       AS fromId,
+      rfrom.name     AS fromName
     FROM messages m
     JOIN roles rfrom ON rfrom.id = m.fromRoleId
     WHERE m.toRoleId = ?
@@ -316,13 +440,23 @@ export async function getMessagesReceived(
 
   const rows = db.prepare(`${base} ${cond} ${order}`).all(...params) as any[];
   const items = rows.map(r => ({
-    id: r.id, from: { id: r.fromId, name: r.fromName }, text: r.text, createdAt: r.createdAt,
+    id: r.id,
+    from: { id: r.fromId, name: r.fromName },
+    text: r.text,
+    createdAt: r.createdAt,
+    // 新增的扁平字段
+    fromRoleId: r.fromRoleId,
+    toRoleId: r.toRoleId,
+    kind: r.kind as "request" | "response",
+    inReplyTo: r.inReplyTo ?? null,
   }));
-  const nextCursor = items.length === opt.limit
-    ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
-    : undefined;
+  const nextCursor =
+    items.length === opt.limit
+      ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
+      : undefined;
   return { items, nextCursor };
 }
+
 
 /* -------------------- 小工具 -------------------- */
 

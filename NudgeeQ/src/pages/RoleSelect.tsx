@@ -5,11 +5,12 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 
 /**
- * API 约定：
- *   GET  {API_BASE}/roles?search=xx   -> RoleSummary[]
- *   POST {API_BASE}/roles             -> 最终步骤去调用，这里不落盘
+ * API:
+ *   GET  {API}/roles?search=xx   -> RoleSummary[]
+ *   POST {API}/roles             -> only used by Finalize, not here
  */
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API = API_BASE.endsWith("/api") ? API_BASE : `${API_BASE}/api`;
 
 type RoleSummary = { id: string; name: string };
 
@@ -19,19 +20,35 @@ export default function RoleSelect() {
   const [name, setName] = useState("");
   const canSubmit = useMemo(() => name.trim().length > 0, [name]);
 
-  // 仅创建草稿，不落盘；最终由 Finalize 页面 POST /roles
+  // Create draft only; Finalize will POST /roles
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setDraftUser({ id: crypto.randomUUID(), name: name.trim() });
-    nav("/table"); // 下一步选桌
+    nav("/table"); // go to table picker (new role flow)
   }
 
-  // 选择现有角色：直接成为正式用户；默认进入选桌（也可以跳到房间）
-  function useExisting(role: RoleSummary) {
+  // Pick existing role: become the user immediately and jump to NearbyTables
+  async function useExisting(role: RoleSummary) {
     setDraftUser(undefined);
     setUser({ id: role.id, name: role.name });
-    nav("/table"); // 若想直接进聊天：nav("/room", { state: { peerId: ... } })
+
+    // try to fetch tableId for highlighting in Nearby
+    let tableId: string | undefined;
+    try {
+      const res = await fetch(`${API}/roles/${encodeURIComponent(role.id)}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const info = await res.json();
+        if (info?.tableId) tableId = String(info.tableId);
+      }
+    } catch {
+      // ignore; still navigate
+    }
+
+    // jump straight to NearbyTables (skip seat & finalize)
+    nav("/nearby", { replace: true, state: tableId ? { tableId } : undefined });
   }
 
   return (
@@ -41,12 +58,12 @@ export default function RoleSelect() {
         bg-[radial-gradient(65%_75%_at_75%_10%,theme(colors.brand.300/.95),rgba(17,14,20,.92))]
       "
     >
-      {/* 顶部品牌 */}
+      {/* Brand */}
       <header className="px-7 py-6 relative z-10">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
       </header>
 
-      {/* 登录式卡片 */}
+      {/* Card */}
       <section className="grow grid place-items-center px-4">
         <div
           className="
@@ -79,12 +96,12 @@ export default function RoleSelect() {
 
           <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
 
-          {/* 现有角色弹窗 */}
+          {/* Existing roles */}
           <ExistingRolesButton onPick={useExisting} />
         </div>
       </section>
 
-      {/* 右下角返回 */}
+      {/* Back */}
       <button
         onClick={() => nav(-1)}
         className="fixed bottom-5 right-5 z-20 rounded-full border border-white/30 bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15"
@@ -96,7 +113,7 @@ export default function RoleSelect() {
   );
 }
 
-/* ============ 子组件：现有角色弹窗（服务端搜索） ============ */
+/* ============ Existing roles modal (server-side search) ============ */
 
 function ExistingRolesButton({ onPick }: { onPick: (r: RoleSummary) => void }) {
   const [open, setOpen] = useState(false);
@@ -126,7 +143,7 @@ function RolePicker({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
-  // 防抖搜索
+  // Debounced search
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -135,8 +152,8 @@ function RolePicker({
         setErr("");
         const url =
           q.trim().length > 0
-            ? `${API_BASE}/roles?search=${encodeURIComponent(q.trim())}`
-            : `${API_BASE}/roles`;
+            ? `${API}/roles?search=${encodeURIComponent(q.trim())}`
+            : `${API}/roles`;
         const res = await fetch(url, { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as RoleSummary[] | { items: RoleSummary[] };
@@ -154,7 +171,7 @@ function RolePicker({
     };
   }, [q]);
 
-  // 关闭：Esc & 点击遮罩
+  // Esc to close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -193,7 +210,7 @@ function RolePicker({
           </button>
         </div>
 
-        {/* 搜索框 */}
+        {/* Search */}
         <div className="mb-3">
           <input
             value={q}
