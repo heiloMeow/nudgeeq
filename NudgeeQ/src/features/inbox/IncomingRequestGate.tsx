@@ -9,7 +9,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const API = API_BASE.endsWith("/api") ? API_BASE : `${API_BASE}/api`;
 
 const REPLY_SORRY = "Sorry, I can’t help right now.";
-const REPLY_SURE  = "Sure, I’m on my way.";
+const REPLY_SURE  = "Sure.";
 
 // 离线拉取时用到的宽松类型
 type MsgKind = "request" | "response";

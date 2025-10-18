@@ -236,22 +236,6 @@ export default function ContactCompose() {
 
   useEventStream(myId, onPush);
 
-  /* ---------- derived ---------- */
-  const responsesByReqId = useMemo(() => {
-    const map = new Map<string, Msg>();
-    for (const m of msgs) {
-      if (m.kind === "response" && m.inReplyTo) {
-        const prev = map.get(m.inReplyTo);
-        if (!prev || new Date(m.createdAt).getTime() > new Date(prev.createdAt).getTime()) {
-          map.set(m.inReplyTo, m);
-        }
-      }
-    }
-    return map;
-  }, [msgs]);
-
-  const requests = useMemo(() => msgs.filter((m) => m.kind === "request"), [msgs]);
-
   /* ---------- send a new request ---------- */
   async function send() {
     if (!myId || !peerId || !input.trim() || sending) return;
@@ -299,7 +283,8 @@ export default function ContactCompose() {
       );
       setInput("");
     } catch (e: any) {
-      alert(e?.message ?? "Send failed");
+      // 不用 alert，直接展示在右侧卡片顶部
+      setErrMsgs(e?.message ?? "Send failed");
     } finally {
       setSending(false);
     }
@@ -324,7 +309,7 @@ export default function ContactCompose() {
           className="rounded-full border border-white/30 bg-white/10 backdrop-blur px-3 py-1.5 text-sm hover:bg-white/15"
           aria-label="Back"
         >
-          ←
+          ← Back
         </button>
       </header>
 

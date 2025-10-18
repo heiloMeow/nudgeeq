@@ -57,8 +57,6 @@ export default function TableSelect() {
       {/* 顶部品牌 */}
       <header className="px-7 py-6 relative z-10 flex items-center gap-3">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
-        <span className="opacity-70 text-sm">·</span>
-        <span className="opacity-80 text-sm">Step 1</span>
         <button
           onClick={() => nav(-1)}
           className="ml-auto rounded-full border border-white/30 bg-white/10 backdrop-blur px-3 py-1.5 text-sm hover:bg-white/15"
@@ -70,6 +68,7 @@ export default function TableSelect() {
 
       {/* 标题 */}
       <section className="px-4 relative z-10">
+        <h2 className="text-center font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 1</h2>
         <h1 className="text-center font-display text-[clamp(28px,5vw,48px)]">Select Your Table</h1>
         <p className="text-center text-white/80 mt-1">Pick a table to continue to seat selection.</p>
       </section>

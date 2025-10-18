@@ -236,7 +236,7 @@ export default function Finalize() {
             "disabled:opacity-50 disabled:cursor-not-allowed",
           ].join(" ")}
         >
-          {loading ? "Creating…" : "Seek Help"}
+          {loading ? "Creating…" : "Join Table"}
         </button>
         {err && <div className="mt-3 text-red-200 text-sm">{err}</div>}
       </section>

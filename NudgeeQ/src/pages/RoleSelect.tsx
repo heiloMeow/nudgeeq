@@ -71,19 +71,19 @@ export default function RoleSelect() {
             p-6 shadow-[0_10px_40px_rgba(0,0,0,.35)]
           "
         >
-          <h1 className="font-display text-3xl mb-3">Create your role</h1>
+          <h1 className="font-display text-3xl mb-3">Enter your nickname</h1>
 
           <form onSubmit={submit} className="grid gap-3">
             <input
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Create your role"
+              placeholder="Enter your nickname"
               className="
                 w-full rounded-lg bg-black/20 border border-white/20 px-3 py-2
                 focus:outline-none focus:ring-2 focus:ring-white/50
               "
-              aria-label="Create your role"
+              aria-label="Enter your nickname"
             />
             <button
               type="submit"

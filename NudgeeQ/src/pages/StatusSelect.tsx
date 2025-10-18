@@ -1,88 +1,27 @@
 // src/pages/StatusSelect.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-/** 静态资源目录：放在 public/avatars 下，页面里用 /avatars/<filename> 访问 */
-const BASE = "/avatars";
+/** Public assets: /public/avatars → served from /avatars/... */
+const AVATAR_BASE = "/avatars";
 
-/** 你的资源清单（文件名来自 public/avatars） */
-const RAW_FILES = [
-  // ---- Female（不含“男”）----
-  "brown-annoying.png","brown-normal.png","brown-okay.png","brown-smile.png",
-  "colorful-annoying.png","colorful-normal.png","colorful-okay.png","colorful-smile.png",
-  "white-annoying.png","white-normal.png","white-okay.png","white-smile.png",
-  "white2-annoying.png","white2-normal.png","white2-okay.png","white2-smile.png",
-  "yellow-annoying.png","yellow-normal.png","yellow-okay.png","yellow-smile.png",
-  // ---- Male（包含“男”）----
-  "彩男- annoying.png","彩男- normal.png","彩男-Okay.png","彩男-smile.png",
-  "棕男- annoying.png","棕男-Okay.png","棕男-smile.png","棕男-working.png",
-  "白男- annoying.png","白男- normal.png","白男-okay.png","白男-Smile.png",
-  "白男2- annoying.png","白男2-normal.png","白男2-Okay.png","白男2-smile.png",
-  "黄男- annoying.png","黄男-normal.png","黄男-Okay.png","黄男-smile.png",
-] as const;
-
+/** Colors for the carousel */
+const COLORS = ["colorful", "brown", "white", "white2", "yellow"] as const;
+type Color = typeof COLORS[number];
+type Status = "smile" | "okay" | "normal" | "annoying";
 type Gender = "female" | "male";
-type Tone   = "white" | "white2" | "yellow" | "brown" | "colorful";
-type Expr   = "smile" | "okay" | "normal" | "annoying" | "working";
 
-type Avatar = {
-  gender: Gender;
-  tone: Tone;
-  expr: Expr;
-  file: string;
-  src: string;
-};
+/** Status labels */
+const STATUS_OPTS: { value: Status; label: string }[] = [
+  { value: "smile",    label: "Happy" },
+  { value: "okay",     label: "All Good" },
+  { value: "normal",   label: "Working" },
+  { value: "annoying", label: "Annoying" },
+];
 
-const EXPR_LABEL: Record<Expr, string> = {
-  smile: "Happy",
-  okay: "All Good",
-  normal: "Normal",
-  annoying: "Annoyed",
-  working: "Working",
-};
-
-const ZH_MALE_PREFIX_TO_TONE: Record<string, Tone> = {
-  "彩男": "colorful",
-  "棕男": "brown",
-  "白男2": "white2",
-  "白男": "white",
-  "黄男": "yellow",
-};
-
-function parseFile(file: string): Avatar | null {
-  const src = `${BASE}/${encodeURIComponent(file)}`;
-  const base = file.replace(/\.(png|jpg|jpeg|webp)$/i, "");
-
-  // 男：文件名包含“男”
-  if (base.includes("男")) {
-    const prefix = Object.keys(ZH_MALE_PREFIX_TO_TONE).find((p) => base.startsWith(p));
-    if (!prefix) return null;
-    const tone = ZH_MALE_PREFIX_TO_TONE[prefix];
-    const raw = base.split("-").slice(1).join("-").trim().toLowerCase().replace(/\s+/g, "");
-    let expr: Expr | null = null;
-    if (/(^|-)smile$/.test(raw)) expr = "smile";
-    else if (/(^|-)okay$/.test(raw)) expr = "okay";
-    else if (/(^|-)normal$/.test(raw)) expr = "normal";
-    else if (/(^|-)annoying$/.test(raw)) expr = "annoying";
-    else if (/(^|-)working$/.test(raw)) expr = "working";
-    if (!expr) return null;
-    return { gender: "male", tone, expr, file, src };
-  }
-
-  // 女：white2-smile / white-smile / yellow-okay 等
-  const m = base.match(/^(white2|white|yellow|brown|colorful)[-\s]([a-zA-Z]+)$/i);
-  if (!m) return null;
-  const tone = m[1].toLowerCase() as Tone;
-  const e = m[2].toLowerCase();
-  const map: Record<string, Expr> = { smile: "smile", okay: "okay", normal: "normal", annoying: "annoying", working: "working" };
-  const expr = map[e];
-  if (!expr) return null;
-  return { gender: "female", tone, expr, file, src };
-}
-
-const AVATARS: Avatar[] = RAW_FILES.map(parseFile).filter(Boolean) as Avatar[];
-
-/* ===================================================== */
+/** Build image src by gender + tone + status */
+const srcOf = (gender: Gender, c: Color | string, s: Status | string) =>
+  `${AVATAR_BASE}/${encodeURIComponent(c)}${gender === "male" ? "man" : ""}-${encodeURIComponent(s)}.png`;
 
 export default function StatusSelect() {
   const nav = useNavigate();
@@ -90,234 +29,256 @@ export default function StatusSelect() {
   const tableId = state?.tableId ?? null;
   const seatId  = state?.seatId  ?? null;
 
-  // 如果没有上一步的信息，自动回到选桌/选座，防用户直接敲地址栏
+  // guard
   useEffect(() => {
-    if (!tableId || !seatId) {
-      nav("/seat", { replace: true });
-    }
+    if (!tableId || !seatId) nav("/seat", { replace: true });
   }, [tableId, seatId, nav]);
 
-  // 筛选条件
+  // selections
   const [gender, setGender] = useState<Gender>("female");
-  const [tone, setTone]     = useState<Tone | "any">("any");
-  const [expr, setExpr]     = useState<Expr | "any">("any");
+  const [selectedColor, setSelectedColor] = useState<Color>("white");
+  const [selectedStatus, setSelectedStatus] = useState<Status>("normal");
+  const [colorIndex, setColorIndex] = useState<number>(COLORS.indexOf("white"));
 
-  // 过滤后的列表
-  const list = useMemo(() => {
-    return AVATARS.filter(a =>
-      a.gender === gender &&
-      (tone === "any" || a.tone === tone) &&
-      (expr === "any" || a.expr === expr)
-    );
-  }, [gender, tone, expr]);
+  // 5-visible carousel window
+  const visibleColors = useMemo(() => {
+    const out: Color[] = [];
+    for (let i = -2; i <= 2; i++) {
+      const idx = (colorIndex + i + COLORS.length) % COLORS.length;
+      out.push(COLORS[idx]);
+    }
+    return out;
+  }, [colorIndex]);
 
-  const [idx, setIdx] = useState(0);
-  useEffect(() => { setIdx(0); }, [gender, tone, expr]);
-
-  const cur = list[idx];
-
-  // 可选项集合
-  const tonesForGender = useMemo(() => {
-    const s = new Set<Tone>();
-    for (const a of AVATARS) if (a.gender === gender) s.add(a.tone);
-    return Array.from(s);
-  }, [gender]);
-
-  const exprForSelection = useMemo(() => {
-    const s = new Set<Expr>();
-    for (const a of AVATARS) if (a.gender === gender && (tone === "any" || a.tone === tone)) s.add(a.expr);
-    return Array.from(s);
-  }, [gender, tone]);
-
-  // 键盘左右切换
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") next();
-      if (e.key === "ArrowLeft") prev();
+    setSelectedColor(COLORS[colorIndex]);
+  }, [colorIndex]);
+
+  // keyboard & touch
+  const trackRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft")  prevColor();
+      if (e.key === "ArrowRight") nextColor();
     };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, []); // ← 只挂一次
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    let x0 = 0, dx = 0;
+    const start = (e: TouchEvent) => { x0 = e.touches[0].clientX; dx = 0; };
+    const move  = (e: TouchEvent) => { dx = e.touches[0].clientX - x0; };
+    const end   = () => { if (Math.abs(dx) > 40) (dx < 0 ? nextColor() : prevColor()); };
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove",  move,  { passive: true });
+    el.addEventListener("touchend",   end);
+    return () => {
+      el.removeEventListener("touchstart", start);
+      el.removeEventListener("touchmove",  move);
+      el.removeEventListener("touchend",   end);
+    };
+  }, []);
 
-  const prev = () => setIdx(i => (list.length ? (i - 1 + list.length) % list.length : 0));
-  const next = () => setIdx(i => (list.length ? (i + 1) % list.length : 0));
+  const prevColor = () => setColorIndex(i => (i - 1 + COLORS.length) % COLORS.length);
+  const nextColor = () => setColorIndex(i => (i + 1) % COLORS.length);
 
-  // 完成：带着头像去 Step 4
-  const goNext = () => {
-    if (!cur || !tableId || !seatId) return;
-    nav("/signal", { state: { tableId, seatId, avatarSrc: cur.src } });
+  const confirmAvatar = () => {
+    if (!tableId || !seatId) return;
+    const avatarSrc = srcOf(gender, selectedColor, selectedStatus);
+    nav("/signal", { state: { tableId, seatId, avatarSrc } });
   };
 
   return (
     <main
       className="
-        relative min-h-svh text-white overflow-hidden flex flex-col
+        relative min-h-svh overflow-hidden flex items-center justify-center text-white px-8
+        /* 背景：与截图一致的竖向紫色渐变 */
         bg-[radial-gradient(62%_70%_at_60%_0%,theme(colors.brand.300/.95),rgba(20,16,24,.92))]
       "
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="Avatar selector"
     >
-      {/* 背景细纹 */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[.10]
-                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]" />
+      {/* 斜向细纹（和截图一致） */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[.12]
+                   bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
+      />
+
+      {/* —— 原有装饰圆：保留 —— */}
+      <span aria-hidden className="absolute rounded-full bg-white/1 w-[120px] h-[120px] top-[18%] left-[9%]" />
+      <span aria-hidden className="absolute rounded-full bg-white/5 w-[80px]  h-[80px]  bottom-[14%] right-[10%]" />
 
       {/* 顶部品牌与标题 */}
-      <header className="px-7 py-6">
-        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
-      </header>
+      <div className="absolute top-10 left-12 text-white font-semibold text-[1.5rem] tracking-tight">
+        NudgeeQ
+      </div>
 
-      <section className="px-4">
-        <h2 className="text-center font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 3</h2>
-        <h1 className="text-center font-display text-[clamp(28px,5vw,48px)]">Pick Your Status</h1>
-        <p className="text-center mt-2 opacity-85">Edit My Avatar</p>
-      </section>
+      <div className="text-center w-full max-w-[1100px]">
+        <h5 className="text-center font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 3</h5>
+        <h1 className="text-[clamp(28px,6vw,56px)] font-semibold text-white mb-4 tracking-wide">
+          Select Your Avatar
+        </h1>
 
-      {/* 筛选器（深色下拉 + 白字） */}
-      <section className="px-4 mt-4 flex flex-wrap gap-3 justify-center">
-        <Select value={gender} onChange={v => setGender(v as Gender)} label="Gender">
-          <option value="female">Female</option>
-          <option value="male">Male</option>
-        </Select>
-
-        <Select value={tone} onChange={v => setTone(v as any)} label="Skin">
-          <option value="any">Any</option>
-          {tonesForGender.map(t => (<option key={t} value={t}>{t}</option>))}
-        </Select>
-
-        <Select value={expr} onChange={v => setExpr(v as any)} label="Expression">
-          <option value="any">Any</option>
-          {exprForSelection.map(e => (<option key={e} value={e}>{EXPR_LABEL[e]}</option>))}
-        </Select>
-      </section>
-
-      {/* 轮播 */}
-      <section className="grow grid place-items-center px-4 py-6">
-        <div className="relative w-full max-w-4xl">
-          <button
-            onClick={prev}
-            className="absolute left-0 top-1/2 -translate-y-1/2 text-3xl opacity-70 hover:opacity-100"
-            aria-label="Previous"
-          >«</button>
-          <button
-            onClick={next}
-            className="absolute right-0 top-1/2 -translate-y-1/2 text-3xl opacity-70 hover:opacity-100"
-            aria-label="Next"
-          >»</button>
-
-          <div className="grid grid-cols-3 items-center">
-            <Bubble size="lg" dim>
-              {list.length ? (
-                <SafeImg src={list[(idx - 1 + list.length) % list.length].src} alt="" />
-              ) : null}
-            </Bubble>
-
-            <Bubble size="xl">
-              {cur ? (
-                <SafeImg src={cur.src} alt={`${cur.tone} ${cur.expr}`} />
-              ) : null}
-            </Bubble>
-
-            <Bubble size="lg" dim>
-              {list.length ? (
-                <SafeImg src={list[(idx + 1) % list.length].src} alt="" />
-              ) : null}
-            </Bubble>
-          </div>
-
-          <div className="text-center mt-4 text-xl">
-            {cur ? EXPR_LABEL[cur.expr] : (list.length ? "Select one" : "No result")}
+        {/* Gender segmented control */}
+        <div className="mb-8 flex justify-center">
+          <div className="inline-flex rounded-full bg-white/15 backdrop-blur border border-white/25 p-1">
+            {(["female","male"] as Gender[]).map(g => {
+              const active = gender === g;
+              return (
+                <button
+                  key={g}
+                  onClick={() => setGender(g)}
+                  className={[
+                    "px-5 py-1.5 rounded-full text-sm font-medium transition",
+                    active
+                      ? "bg-white/30 border border-white/40 shadow-[0_2px_8px_rgba(0,0,0,.25)]"
+                      : "hover:bg-white/20"
+                  ].join(" ")}
+                  aria-pressed={active}
+                >
+                  {g === "female" ? "Female" : "Male"}
+                </button>
+              );
+            })}
           </div>
         </div>
-      </section>
 
-      {/* 底部操作 */}
-      <section className="px-4 pb-16 grid place-items-center">
-        <button
-          onClick={goNext}
-          disabled={!cur || !tableId || !seatId}
-          className="min-w-[180px] rounded-lg py-2 bg-brand-500 hover:bg-brand-700 disabled:opacity-50"
-        >
-          That’s It
+        {/* Carousel row */}
+        <div className="relative my-6 flex items-center justify-center gap-8">
+
+          <button
+            type="button"
+            onClick={prevColor}
+            aria-label="Previous color"
+            className="p-3 -m-3 text-2xl opacity-70 hover:opacity-100
+                      rounded-full focus-visible:outline-2 focus-visible:outline-white/90 focus-visible:outline-offset-2
+"
+          >
+            «‹
+          </button>
+          <div ref={trackRef} className="flex items-center justify-center gap-6 h-[220px]">
+            {visibleColors.map((color, idx) => {
+              const role =
+                idx === 2 ? "center" : (idx === 1 || idx === 3) ? "side" : "far";
+              const sizeCls =
+                role === "center" ? "w-[180px] h-[180px]" :
+                role === "side"   ? "w-[142px] h-[142px]" : "w-[106px] h-[106px]";
+              const opacityCls =
+                role === "center" ? "opacity-100" :
+                role === "side"   ? "opacity-[.85]"  : "opacity-60";
+              const scaleCls =
+                role === "center" ? "scale-100" :
+                role === "side"   ? "scale-[0.88]" : "scale-[0.72]";
+              const zCls =
+                role === "center" ? "z-30" : role === "side" ? "z-20" : "z-10";
+
+              return (
+                <button
+                  key={color}
+                  onClick={() => { setSelectedColor(color); setColorIndex(COLORS.indexOf(color)); }}
+                  className={[
+                    "transition-all duration-300 ease-out flex items-center justify-center cursor-pointer",
+                    sizeCls, opacityCls, zCls, scaleCls,
+                  ].join(" ")}
+                  aria-label={`Pick color ${color}`}
+                >
+                  <div
+                    className={[
+                      "rounded-full p-[14px] bg-white/18 backdrop-blur",
+                      "shadow-[0_10px_36px_rgba(0,0,0,.25)] border border-white/35",
+                      role === "center" ? "p-5 border-2 shadow-[0_16px_44px_rgba(0,0,0,.35)]" : "",
+                      "w-full h-full grid place-items-center",
+                    ].join(" ")}
+                  >
+                    <img
+                      src={srcOf(gender, color, selectedStatus)}
+                      alt={`${gender} ${color} ${selectedStatus}`}
+                      className="w-full h-full object-contain rounded-full select-none"
+                      draggable={false}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={nextColor}
+            aria-label="Next color"
+            className="p-3 -m-3 text-2xl opacity-70 hover:opacity-100
+                      rounded-full focus-visible:outline-2 focus-visible:outline-white/90 focus-visible:outline-offset-2
+"
+          >
+            ›»
         </button>
-      </section>
+        </div>
 
-      {/* 右下角返回（与其它页一致） */}
+        {/* Status selector row */}
+        <div className="flex gap-10 justify-center my-10 flex-wrap">
+          {STATUS_OPTS.map((s) => {
+            const selected = selectedStatus === s.value;
+            return (
+              <div key={s.value} className="flex flex-col items-center gap-3">
+                <button
+                  onClick={() => setSelectedStatus(s.value)}
+                  className={[
+                    "p-2 rounded-full bg-white/15 backdrop-blur border-2 border-transparent transition",
+                    selected
+                      ? "border-blue-600/80 bg-white/25 shadow-[0_6px_18px_rgba(37,99,235,.38)]"
+                      : "hover:scale-[1.05] hover:bg-white/20",
+                  ].join(" ")}
+                  aria-pressed={selected}
+                  aria-label={s.label}
+                  title={s.label}
+                >
+                  <img
+                    src={srcOf(gender, selectedColor, s.value)}
+                    alt={s.label}
+                    className="w-[110px] h-[110px] rounded-full object-contain block select-none"
+                    draggable={false}
+                  />
+                </button>
+                <p className="m-0 text-white text-[1.05rem] font-medium">{s.label}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Confirm — 按你那版：玻璃态 + 边框 + 30px 圆角 */}
+        <div className="mt-4 pb-10">
+          <button
+            onClick={confirmAvatar}
+            disabled={!tableId || !seatId}
+            className="
+              mt-2 px-12 py-4 text-white font-semibold text-[1.1rem] rounded-[30px]
+              bg-white/30 border-2 border-white/50 backdrop-blur
+              shadow-[0_4px_15px_rgba(0,0,0,.2)]
+              hover:bg-white/40 hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(0,0,0,.3)]
+              disabled:opacity-60
+            "
+          >
+            That's Me
+          </button>
+        </div>
+      </div>
+
+      {/* 返回键：保留 SeatSelect 的玻璃胶囊风格 */}
       <button
         onClick={() => nav(-1)}
-        className="fixed bottom-5 right-5 z-20 rounded-full border border-white/30 bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15"
+        className="
+          fixed bottom-5 right-5 z-20 rounded-full border border-white/30
+          bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15
+        "
         aria-label="Back"
+        title="Back"
       >
         ← Back
       </button>
     </main>
-  );
-}
-
-/* ========= 小组件 ========= */
-
-function Select({
-  value, onChange, label, children,
-}: { value: string; onChange: (v: string)=>void; label: string; children: React.ReactNode }) {
-  return (
-    <label className="relative inline-flex items-center gap-2">
-      <span className="text-sm opacity-85">{label}</span>
-
-      <span className="relative inline-block">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          // 深色半透明底 + 白字；下拉面板也尽量深色白字（受浏览器限制）
-          className="
-            appearance-none pl-3 pr-8 py-2 rounded-md
-            bg-white/10 text-white border border-white/25 backdrop-blur
-            hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/50
-            [&>option]:bg-[#151821] [&>option]:text-white
-          "
-        >
-          {children}
-        </select>
-        {/* 自定义小箭头 */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-80"
-        >
-          ▾
-        </span>
-      </span>
-    </label>
-  );
-}
-
-function Bubble({ size, dim=false, children }: { size: "lg"|"xl"; dim?: boolean; children?: React.ReactNode }) {
-  const cls = size === "xl" ? "size-[220px] md:size-[260px]" : "size-[160px] md:size-[180px]";
-  return (
-    <div
-      className={[
-        "mx-auto rounded-full grid place-items-center",
-        "bg-[radial-gradient(80%_80%_at_30%_25%,rgba(255,255,255,.16),rgba(255,255,255,.07))]",
-        "shadow-[0_20px_60px_rgba(0,0,0,.35),inset_0_1px_0_rgba(255,255,255,.2)]",
-        "backdrop-blur-md",
-        dim ? "opacity-60" : "opacity-100",
-        cls,
-      ].join(" ")}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** 安全图片：加载失败时用一个通用头像兜底 */
-function SafeImg({ src, alt }: { src: string; alt?: string }) {
-  const [ok, setOk] = useState(true);
-  useEffect(() => { setOk(true); }, [src]);
-  if (!ok) {
-    return <div className="w-full h-full rounded-full grid place-items-center text-xs opacity-80">no image</div>;
-  }
-  return (
-    <img
-      src={src}
-      alt={alt ?? ""}
-      className="w-full h-full object-contain rounded-full select-none"
-      onError={() => setOk(false)}
-      draggable={false}
-    />
   );
 }

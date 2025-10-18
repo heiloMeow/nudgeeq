@@ -148,8 +148,8 @@ export default function SignalSelect() {
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
       />
 
-      {/* 顶部：品牌 + 标题 + Done */}
-      <header className="px-7 py-6 flex items-center justify-between relative z-10">
+      {/* 顶部：品牌 + 标题（删除了原来的 Done 按钮） */}
+      <header className="px-7 py-6 flex items-center justify-between gap-3 relative z-10">
         <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
 
         <div className="text-center grow">
@@ -157,26 +157,21 @@ export default function SignalSelect() {
           <div className="font-display text-[clamp(20px,3.5vw,28px)]">Drag &amp; Show Your Signal</div>
         </div>
 
+        {/* 右上角 Continue（调用原来的 done()） */}
         <button
           onClick={done}
-          className="rounded-lg px-4 py-2 border border-white/25 bg-white/10 hover:bg-white/15 backdrop-blur"
+          aria-label="Continue"
+          className="
+            whitespace-nowrap rounded-lg px-4 py-2
+            bg-brand-500 hover:bg-brand-700 transition
+            shadow-[0_6px_18px_rgba(0,0,0,.35)] hover:shadow-[0_10px_26px_rgba(0,0,0,.5)]
+            hover:ring-2 hover:ring-white/40
+            focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none
+          "
         >
-          Done
+          Continue
         </button>
       </header>
-
-      {/* 左上角返回（样式统一） */}
-      <button
-        onClick={() => nav(-1)}
-        className="
-          absolute left-5 top-[68px] z-20 rounded-full
-          border border-white/30 bg-white/10 backdrop-blur
-          px-3 py-1.5 text-base hover:bg-white/15
-        "
-        aria-label="Back"
-      >
-        ←
-      </button>
 
       {/* 舞台：头像 + 可拖拽气泡 */}
       <section className="grow grid place-items-center px-4">
@@ -256,6 +251,19 @@ export default function SignalSelect() {
         <PresetColumn title=" " colorDot="bg-violet-300" items={presets.center} onPick={(t) => addSignal(t, "center")} />
         <PresetColumn title=" " colorDot="bg-rose-300" items={presets.right} onPick={(t) => addSignal(t, "right")} />
       </section>
+
+      {/* 右下角返回 —— 统一风格与位置 */}
+      <button
+        onClick={() => nav(-1)}
+        className="
+          fixed bottom-5 right-5 z-20 rounded-full border border-white/30
+          bg-white/10 backdrop-blur px-4 py-2 text-sm hover:bg-white/15
+        "
+        aria-label="Back"
+        title="Back"
+      >
+        ← Back
+      </button>
     </main>
   );
 }
