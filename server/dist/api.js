@@ -4,12 +4,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.api = void 0;
-// src/api.ts
+// server/src/api.ts
 const express_1 = __importDefault(require("express"));
 const nanoid_1 = require("nanoid");
 const store_js_1 = require("./store.js");
+const events_js_1 = require("./events.js");
 exports.api = express_1.default.Router();
-/* ---------------------------- 小工具 ---------------------------- */
+/* ---------------------------- helpers ---------------------------- */
 function toSeatId(v) {
     const n = Number(v);
     if (!Number.isFinite(n))
@@ -18,10 +19,10 @@ function toSeatId(v) {
         throw new Error("SEAT_OUT_OF_RANGE");
     return n;
 }
-/* ---------------------------- 健康检查 ---------------------------- */
+/* ---------------------------- health ---------------------------- */
 exports.api.get("/health", (_req, res) => res.json({ ok: true }));
-/* ---------------------------- Tables ---------------------------- */
-/** 附近桌子（用于 Nearby）：GET /api/tables?near=24&limit=5 */
+/* ---------------------------- tables ---------------------------- */
+/** Nearby tables (for Nearby page): GET /api/tables?near=24&limit=5 */
 exports.api.get("/tables", async (req, res) => {
     const near = String(req.query.near ?? "");
     const limit = Math.max(1, Math.min(20, Number(req.query.limit ?? 5)));
@@ -32,7 +33,7 @@ exports.api.get("/tables", async (req, res) => {
             Math.abs(Number(b.id) - Number(near)))
         : tables;
     const pick = sorted.slice(0, limit);
-    // 解引用 seat 的 roleId
+    // de-reference seat's roleId into occupant object
     const out = pick.map((t) => ({
         id: t.id,
         seats: t.seats.map((rid) => {
@@ -46,7 +47,7 @@ exports.api.get("/tables", async (req, res) => {
     }));
     res.json(out);
 });
-/** 单桌占用（Step 2 选座）：GET /api/tables/:id */
+/** One table occupancy (step 2 Seat): GET /api/tables/:id */
 exports.api.get("/tables/:id", async (req, res) => {
     const id = String(req.params.id);
     const t = await (0, store_js_1.findTable)(id);
@@ -61,9 +62,10 @@ exports.api.get("/tables/:id", async (req, res) => {
             ? { id: r.id, name: r.name, avatar: r.avatar, signals: r.signals ?? [] }
             : null;
     });
-    res.json({ id, seats }); // seats 长度恒为 6（null=空位）
+    // seats length is always 6 (null = empty seat)
+    res.json({ id, seats });
 });
-/** 仅看是否被占（轻量轮询）：GET /api/tables/:id/availability */
+/** Lightweight availability (polling): GET /api/tables/:id/availability */
 exports.api.get("/tables/:id/availability", async (req, res) => {
     const id = String(req.params.id);
     const t = await (0, store_js_1.findTable)(id);
@@ -71,8 +73,8 @@ exports.api.get("/tables/:id/availability", async (req, res) => {
         return res.status(404).json({ error: "TABLE_NOT_FOUND" });
     res.json({ id, taken: t.seats.map(Boolean) });
 });
-/* ---------------------------- Roles ---------------------------- */
-/** 角色名列表（现有角色选择）：GET /api/roles?search=xx */
+/* ---------------------------- roles ---------------------------- */
+/** Role list (existing role select): GET /api/roles?search=xx */
 exports.api.get("/roles", async (req, res) => {
     const q = String(req.query.search ?? "").toLowerCase();
     const roles = await (0, store_js_1.getRoles)();
@@ -82,7 +84,7 @@ exports.api.get("/roles", async (req, res) => {
         .map((r) => ({ id: r.id, name: r.name }));
     res.json(list);
 });
-/** 获取单个角色（ContactCompose 左侧信息）：GET /api/roles/:id */
+/** Get one role (left panel of ContactCompose): GET /api/roles/:id */
 exports.api.get("/roles/:id", async (req, res) => {
     const roles = await (0, store_js_1.getRoles)();
     const role = roles.find((r) => r.id === req.params.id);
@@ -98,7 +100,7 @@ exports.api.get("/roles/:id", async (req, res) => {
         createdAt: role.createdAt,
     });
 });
-/** 创建最终角色（Finalize 的 Seek Help）：POST /api/roles */
+/** Create final role (Finalize "Seek Help"): POST /api/roles */
 exports.api.post("/roles", express_1.default.json(), async (req, res) => {
     try {
         const body = req.body;
@@ -114,7 +116,8 @@ exports.api.post("/roles", express_1.default.json(), async (req, res) => {
             seatId: toSeatId(body.seatId),
             createdAt: new Date().toISOString(),
         };
-        await (0, store_js_1.createRole)(r); // 可能抛出：TABLE_NOT_FOUND / SEAT_TAKEN / SEAT_OUT_OF_RANGE
+        // may throw: TABLE_NOT_FOUND / SEAT_TAKEN / SEAT_OUT_OF_RANGE
+        await (0, store_js_1.createRole)(r);
         res.status(201).json({ id: r.id });
     }
     catch (e) {
@@ -128,7 +131,7 @@ exports.api.post("/roles", express_1.default.json(), async (req, res) => {
         res.status(500).json({ error: "INTERNAL" });
     }
 });
-/** 通用编辑（可改 name/avatar/signals，或换桌换座）：PATCH /api/roles/:id */
+/** Generic edit (name/avatar/signals/table/seat): PATCH /api/roles/:id */
 exports.api.patch("/roles/:id", express_1.default.json(), async (req, res) => {
     try {
         const updates = req.body ?? {};
@@ -156,7 +159,7 @@ exports.api.patch("/roles/:id", express_1.default.json(), async (req, res) => {
         res.status(500).json({ error: "INTERNAL" });
     }
 });
-/** 仅改 signals（轻量端点）：PATCH /api/roles/:id/signals */
+/** Signals-only edit (lightweight): PATCH /api/roles/:id/signals */
 exports.api.patch("/roles/:id/signals", express_1.default.json(), async (req, res) => {
     try {
         const signals = Array.isArray(req.body?.signals)
@@ -171,48 +174,63 @@ exports.api.patch("/roles/:id/signals", express_1.default.json(), async (req, re
         res.status(500).json({ error: "INTERNAL" });
     }
 });
-/** 删除角色（释放座位）：DELETE /api/roles/:id */
+/** Delete a role (free the seat): DELETE /api/roles/:id */
 exports.api.delete("/roles/:id", async (req, res) => {
     await (0, store_js_1.deleteRole)(req.params.id);
     res.json({ ok: true });
 });
-/* ---------------------------- Search ---------------------------- */
-/** 信号关键词搜索（用于 Nearby 高亮）：GET /api/search/signals?q=xxx&limit=30 */
+/* ---------------------------- search ---------------------------- */
+/** Signal keyword search (for Nearby highlight): GET /api/search/signals?q=xxx&limit=30
+ * Expected rows: [{ role:{id,name,avatar}, tableId, seatId? }]
+ * (Front-end is tolerant to alternative shapes.)
+ */
 exports.api.get("/search/signals", async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 30)));
     if (!q)
         return res.json([]);
     const rows = await (0, store_js_1.searchRolesBySignalFTS)(q, limit);
-    // 期望 rows: [{ role:{id,name,avatar}, tableId, seatId? }]
     res.json(rows);
 });
-/* ---------------------------- Messages ---------------------------- */
-/** 我发出的消息：GET /api/roles/:id/messages/sent?cursor=...&limit=20 */
+/* ---------------------------- messages ---------------------------- */
+/** Sent box: GET /api/roles/:id/messages/sent?cursor=...&limit=20 */
 exports.api.get("/roles/:id/messages/sent", async (req, res) => {
     const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 20)));
     const cursor = String(req.query.cursor ?? "");
     const out = await (0, store_js_1.getMessagesSent)(req.params.id, { cursor, limit });
     res.json(out);
 });
-/** 发给我的消息：GET /api/roles/:id/messages/received?cursor=...&limit=20 */
+/** Inbox: GET /api/roles/:id/messages/received?cursor=...&limit=20 */
 exports.api.get("/roles/:id/messages/received", async (req, res) => {
     const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 20)));
     const cursor = String(req.query.cursor ?? "");
     const out = await (0, store_js_1.getMessagesReceived)(req.params.id, { cursor, limit });
     res.json(out);
 });
-/** REST 发送消息（WS 离线兜底 / ContactCompose 发送）：POST /api/messages
- *  body: { fromRoleId: string, toRoleId: string, text: string }
+/** REST send message (fallback when WS is offline / used by ContactCompose)
+ * body: { fromRoleId: string, toRoleId: string, text: string }
  */
 exports.api.post("/messages", express_1.default.json(), async (req, res) => {
-    const { fromRoleId, toRoleId, text } = req.body ?? {};
+    const { fromRoleId, toRoleId, text, kind, inReplyTo } = req.body ?? {};
     if (!fromRoleId || !toRoleId || typeof text !== "string" || !text.trim()) {
         return res.status(400).json({ error: "MISSING_FIELDS" });
     }
     try {
-        const id = await (0, store_js_1.addMessage)(String(fromRoleId), String(toRoleId), text.trim());
-        res.status(201).json({ id });
+        // 可选：校验角色存在，避免“孤儿消息”
+        const roles = await (0, store_js_1.getRoles)();
+        const okFrom = roles.some(r => r.id === String(fromRoleId));
+        const okTo = roles.some(r => r.id === String(toRoleId));
+        if (!okFrom || !okTo)
+            return res.status(404).json({ error: "ROLE_NOT_FOUND" });
+        const safeKind = kind === "response" ? "response" : "request";
+        const msg = await (0, store_js_1.addMessage)(String(fromRoleId), String(toRoleId), text.trim(), safeKind, inReplyTo ? String(inReplyTo) : undefined);
+        // 若已启用 SSE，推给双方
+        try {
+            (0, events_js_1.publish)(String(toRoleId), "message", { ...msg, dir: "in" });
+            (0, events_js_1.publish)(String(fromRoleId), "message", { ...msg, dir: "out" });
+        }
+        catch { }
+        res.status(201).json({ id: msg.id });
     }
     catch (e) {
         console.error(e);

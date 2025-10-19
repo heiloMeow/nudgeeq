@@ -34,7 +34,9 @@ export default function SeatSelect() {
     (async () => {
       try {
         setErr("");
-        const res = await fetch(`${API_BASE}/tables/${encodeURIComponent(tableId)}`);
+        const res = await fetch(`${API_BASE}/tables/${encodeURIComponent(tableId)}`, {
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { id: string; seats: SeatOcc[] };
         if (!aborted) setSeats(normalizeSeats(data.seats));
@@ -50,7 +52,9 @@ export default function SeatSelect() {
     if (!tableId) return;
     const t = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/tables/${encodeURIComponent(tableId)}/availability`);
+        const r = await fetch(`${API_BASE}/tables/${encodeURIComponent(tableId)}/availability`, {
+          cache: "no-store",
+        });
         if (!r.ok) return;
         const data = (await r.json()) as { taken: boolean[] };
         setSeats((prev) => {

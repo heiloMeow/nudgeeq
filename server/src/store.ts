@@ -130,12 +130,7 @@ export async function createRole(r: Role) {
     const table = db.prepare(`SELECT id FROM tables WHERE id = ?`).get(r.tableId);
     if (!table) throw new Error("TABLE_NOT_FOUND");
 
-    const seat = db.prepare(
-      `SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`
-    ).get(r.tableId, seatIdx) as { roleId: string | null } | undefined;
-
-    if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
-    if (seat.roleId) throw new Error("SEAT_TAKEN");
+    ensureSeatAvailable(r.tableId, seatIdx);
 
     db.prepare(
       `INSERT INTO roles(id,name,avatar,signals,tableId,seatId,createdAt)
@@ -153,18 +148,6 @@ export async function createRole(r: Role) {
   tx();
 }
 
-// ---------- put near other helpers ----------
-function getTableColumns(table: string): Set<string> {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  return new Set(rows.map(r => r.name));
-}
-
-function findSeatColumnName(columns: Set<string>, seatId: number): string | undefined {
-  const candidates = [`seat${seatId}`, `seat_${seatId}`];
-  return candidates.find(c => columns.has(c));
-}
-
-// ---------- replace your deleteRole with this version ----------
 
 // lazily created transaction to avoid calling db.transaction() before initDB()
 let _txDeleteRole: ((roleId: string) => void) | null = null;
@@ -174,38 +157,25 @@ export function deleteRole(roleId: string) {
     if (!db) throw new Error("DB_NOT_INITIALIZED");
 
     _txDeleteRole = db.transaction((rid: string) => {
-      // 读取当前角色，拿到 tableId/seatId 准备释放座位
-      const r = db.prepare(`
-        SELECT id, tableId, seatId
+      const role = db.prepare(`
+        SELECT tableId, seatId
         FROM roles
         WHERE id = ?
-      `).get(rid) as { id: string; tableId?: string; seatId?: number } | undefined;
+      `).get(rid) as { tableId?: string; seatId?: number } | undefined;
 
-      // 1) 释放座位（根据实际表结构动态选择 JSON or 列式）
-      if (r?.tableId && r?.seatId) {
-        const cols = getTableColumns("tables");
-
-        if (cols.has("seats")) {
-          // JSON 数组结构：tables.seats = [roleId|null,...]
+      if (role?.tableId && typeof role.seatId === "number") {
+        const seatIdx = role.seatId - 1;
+        if (seatIdx >= 0 && seatIdx <= 5) {
           db.prepare(`
-            UPDATE tables
-            SET seats = json_set(seats, '$[' || (? - 1) || ']', NULL)
-            WHERE id = ?
-          `).run(r.seatId, r.tableId);
-        } else {
-          // 列式结构：seat1..seat6 或 seat_1..seat_6
-          const seatCol = findSeatColumnName(cols, r.seatId);
-          if (seatCol) {
-            db.prepare(`UPDATE tables SET ${seatCol} = NULL WHERE id = ?`).run(r.tableId);
-          }
-          // 如果既没有 seats 也没有 seatN，就无事可做（容忍不同 schema）
+            UPDATE seats
+            SET roleId = NULL
+            WHERE tableId = ? AND seatIndex = ?
+          `).run(role.tableId, seatIdx);
         }
       }
 
-      // 2) 先删消息，避免外键拦截
+      db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(rid);
       db.prepare(`DELETE FROM messages WHERE fromRoleId = ? OR toRoleId = ?`).run(rid, rid);
-
-      // 3) 再删角色
       db.prepare(`DELETE FROM roles WHERE id = ?`).run(rid);
     });
   }
@@ -247,12 +217,7 @@ export async function storeUpdateRole(
       const table = db.prepare(`SELECT id FROM tables WHERE id = ?`).get(next.tableId);
       if (!table) throw new Error("TABLE_NOT_FOUND");
 
-      const seat = db.prepare(
-        `SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`
-      ).get(next.tableId, seatIdxNew) as { roleId: string | null } | undefined;
-
-      if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
-      if (seat.roleId && seat.roleId !== roleId) throw new Error("SEAT_TAKEN");
+      ensureSeatAvailable(next.tableId, seatIdxNew, roleId);
 
       // 释放旧座、占新座
       db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
@@ -465,6 +430,29 @@ function ensureColumn(table: string, name: string, ddl: string) {
   if (!cols.some(c => c.name === name)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
+}
+
+/**
+ * Ensure the requested seat is usable. If the seat references a role that no
+ * longer exists (legacy/orphaned data), clear the stale pointer so the seat can
+ * be reused. Optionally allow the current role to keep its seat when moving.
+ */
+function ensureSeatAvailable(tableId: string, seatIdx: number, allowRoleId?: string) {
+  const seat = db.prepare(
+    `SELECT roleId FROM seats WHERE tableId = ? AND seatIndex = ?`
+  ).get(tableId, seatIdx) as { roleId: string | null } | undefined;
+
+  if (!seat) throw new Error("SEAT_OUT_OF_RANGE");
+  if (!seat.roleId) return;
+  if (allowRoleId && seat.roleId === allowRoleId) return;
+
+  const owner = db.prepare(`SELECT id FROM roles WHERE id = ?`).get(seat.roleId) as { id: string } | undefined;
+  if (!owner) {
+    db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`).run(tableId, seatIdx);
+    return;
+  }
+
+  throw new Error("SEAT_TAKEN");
 }
 
 function safeParse<T>(s: string, d: T): T {

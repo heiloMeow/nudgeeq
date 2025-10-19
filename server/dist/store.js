@@ -152,18 +152,34 @@ async function createRole(r) {
     });
     tx();
 }
-async function deleteRole(roleId) {
-    const tx = db.transaction(() => {
-        const r = db.prepare(`SELECT tableId, seatId FROM roles WHERE id = ?`)
-            .get(roleId);
-        if (!r)
-            return;
-        db.prepare(`DELETE FROM roles WHERE id = ?`).run(roleId);
-        db.prepare(`UPDATE seats SET roleId = NULL WHERE tableId = ? AND seatIndex = ?`)
-            .run(r.tableId, r.seatId - 1);
-        db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(roleId);
-    });
-    tx();
+// lazily created transaction to avoid calling db.transaction() before initDB()
+let _txDeleteRole = null;
+function deleteRole(roleId) {
+    if (!_txDeleteRole) {
+        if (!db)
+            throw new Error("DB_NOT_INITIALIZED");
+        _txDeleteRole = db.transaction((rid) => {
+            const role = db.prepare(`
+        SELECT tableId, seatId
+        FROM roles
+        WHERE id = ?
+      `).get(rid);
+            if (role?.tableId && typeof role.seatId === "number") {
+                const seatIdx = role.seatId - 1;
+                if (seatIdx >= 0 && seatIdx <= 5) {
+                    db.prepare(`
+            UPDATE seats
+            SET roleId = NULL
+            WHERE tableId = ? AND seatIndex = ?
+          `).run(role.tableId, seatIdx);
+                }
+            }
+            db.prepare(`DELETE FROM role_signals WHERE roleId = ?`).run(rid);
+            db.prepare(`DELETE FROM messages WHERE fromRoleId = ? OR toRoleId = ?`).run(rid, rid);
+            db.prepare(`DELETE FROM roles WHERE id = ?`).run(rid);
+        });
+    }
+    _txDeleteRole(roleId);
 }
 async function patchSignals(roleId, signals) {
     const info = db.prepare(`UPDATE roles SET signals = ? WHERE id = ?`)
@@ -211,21 +227,39 @@ async function storeUpdateRole(roleId, updates) {
     return tx();
 }
 /* -------------------- FTS 搜索（signal -> 角色+桌号） -------------------- */
-async function searchRolesBySignalFTS(q, limit) {
-    const terms = q.trim().split(/\s+/).filter(Boolean).map(normalizeSignal);
-    if (!terms.length)
+// 安全的 signals 关键词搜索（不依赖 FTS，使用 JSON1 + LIKE）
+// 安全的 signals 关键词搜索（JSON1 + LIKE，参数化；不依赖 FTS 表）
+function searchRolesBySignalFTS(q, limit) {
+    const terms = String(q || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    if (terms.length === 0)
         return [];
-    const ftsQuery = terms.map(t => `${t}*`).join(" AND ");
-    const rows = db.prepare(`
-    SELECT r.id as id, r.name as name, r.avatar as avatar, r.tableId as tableId
-    FROM role_signals_fts f
-    JOIN role_signals  rs ON rs.rowid = f.rowid
-    JOIN roles         r  ON r.id     = rs.roleId
-    WHERE f MATCH ?
-    GROUP BY r.id
-    LIMIT ?
-  `).all(ftsQuery, limit);
-    return rows.map(r => ({ role: { id: r.id, name: r.name, avatar: r.avatar }, tableId: r.tableId }));
+    // 每个词都变成一个 EXISTS 子句；OR = 命中任意词即可（需要“全都命中”就把 OR 改 AND）
+    const wheres = terms.map(() => `EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(r.signals, '[]'))
+              WHERE CAST(json_each.value AS TEXT) LIKE ?
+           )`);
+    const sql = `
+    SELECT r.id, r.name, r.avatar, r.tableId, r.seatId, r.createdAt
+    FROM roles r
+    WHERE ${wheres.join(" OR ")}
+    ORDER BY datetime(r.createdAt) DESC
+    LIMIT ?;
+  `;
+    const params = [
+        ...terms.map(t => `%${t}%`),
+        Math.max(1, Math.min(100, Number(limit) || 30)),
+    ];
+    const rows = db.prepare(sql).all(...params);
+    // 与 /api/search/signals 期望结构对齐
+    return rows.map(r => ({
+        role: { id: r.id, name: r.name, avatar: r.avatar },
+        tableId: r.tableId,
+        seatId: r.seatId,
+    }));
 }
 /* -------------------- 消息：入库与分页查询（Keyset 游标） -------------------- */
 async function addMessage(fromRoleId, toRoleId, text, kind = "request", inReplyTo) {
@@ -238,8 +272,16 @@ async function addMessage(fromRoleId, toRoleId, text, kind = "request", inReplyT
 async function getMessagesSent(roleId, opt) {
     const { ts, lastId } = parseCursor(opt.cursor);
     const base = `
-    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
-           rto.id as toId, rto.name as toName
+    SELECT
+      m.id           AS id,
+      m.text         AS text,
+      m.createdAt    AS createdAt,
+      m.kind         AS kind,
+      m.inReplyTo    AS inReplyTo,
+      m.fromRoleId   AS fromRoleId,
+      m.toRoleId     AS toRoleId,
+      rto.id         AS toId,
+      rto.name       AS toName
     FROM messages m
     JOIN roles rto ON rto.id = m.toRoleId
     WHERE m.fromRoleId = ?
@@ -252,7 +294,15 @@ async function getMessagesSent(roleId, opt) {
     params.push(opt.limit);
     const rows = db.prepare(`${base} ${cond} ${order}`).all(...params);
     const items = rows.map(r => ({
-        id: r.id, to: { id: r.toId, name: r.toName }, text: r.text, createdAt: r.createdAt,
+        id: r.id,
+        to: { id: r.toId, name: r.toName },
+        text: r.text,
+        createdAt: r.createdAt,
+        // 新增的扁平字段
+        fromRoleId: r.fromRoleId,
+        toRoleId: r.toRoleId,
+        kind: r.kind,
+        inReplyTo: r.inReplyTo ?? null,
     }));
     const nextCursor = items.length === opt.limit
         ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
@@ -262,8 +312,16 @@ async function getMessagesSent(roleId, opt) {
 async function getMessagesReceived(roleId, opt) {
     const { ts, lastId } = parseCursor(opt.cursor);
     const base = `
-    SELECT m.id as id, m.text as text, m.createdAt as createdAt,
-           rfrom.id as fromId, rfrom.name as fromName
+    SELECT
+      m.id           AS id,
+      m.text         AS text,
+      m.createdAt    AS createdAt,
+      m.kind         AS kind,
+      m.inReplyTo    AS inReplyTo,
+      m.fromRoleId   AS fromRoleId,
+      m.toRoleId     AS toRoleId,
+      rfrom.id       AS fromId,
+      rfrom.name     AS fromName
     FROM messages m
     JOIN roles rfrom ON rfrom.id = m.fromRoleId
     WHERE m.toRoleId = ?
@@ -276,7 +334,15 @@ async function getMessagesReceived(roleId, opt) {
     params.push(opt.limit);
     const rows = db.prepare(`${base} ${cond} ${order}`).all(...params);
     const items = rows.map(r => ({
-        id: r.id, from: { id: r.fromId, name: r.fromName }, text: r.text, createdAt: r.createdAt,
+        id: r.id,
+        from: { id: r.fromId, name: r.fromName },
+        text: r.text,
+        createdAt: r.createdAt,
+        // 新增的扁平字段
+        fromRoleId: r.fromRoleId,
+        toRoleId: r.toRoleId,
+        kind: r.kind,
+        inReplyTo: r.inReplyTo ?? null,
     }));
     const nextCursor = items.length === opt.limit
         ? `${items[items.length - 1].createdAt}_${items[items.length - 1].id}`
