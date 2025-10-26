@@ -176,7 +176,7 @@ export default function Finalize() {
 
       {/* Brand / Table label */}
       <header className="px-7 py-6 relative z-10">
-        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
+        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ · Admin</span>
       </header>
       <h1 className="text-center font-display text-[clamp(26px,4.6vw,40px)] -mt-2 mb-2 relative z-10">
         {tableId ? `Table ${tableId}` : "Ready"}
@@ -236,7 +236,7 @@ export default function Finalize() {
             "disabled:opacity-50 disabled:cursor-not-allowed",
           ].join(" ")}
         >
-          {loading ? "Creating…" : "Join Table"}
+          {loading ? "Creating…" : "Initialize Device"}
         </button>
         {err && <div className="mt-3 text-red-200 text-sm">{err}</div>}
       </section>

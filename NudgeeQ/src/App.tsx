@@ -11,6 +11,13 @@ import SignalSelect from "./pages/SignalSelect";
 import Finalize from "./pages/Finalize";
 import NearbyTables from "./pages/NearbyTables";
 import IncomingRequestGate from "./features/inbox/IncomingRequestGate";
+import UserHome from "./pages/UserHome";
+import UserRoleSelect from "./pages/UserRoleSelect";
+import UserStatusSelect from "./pages/UserStatusSelect";
+import UserSignalSelect from "./pages/UserSignalSelect";
+import UserFinalize from "./pages/UserFinalize";
+import EditStatus from "./pages/EditStatus";
+import EditSignal from "./pages/EditSignal";
 
 // 全局 store（草稿用户等）
 import { useApp } from "./app/store";
@@ -20,6 +27,11 @@ import ContactCompose from "./pages/ContactCompose";
 function Guard({ children }: { children: React.ReactNode }) {
   const { draftUser, user } = useApp();
   return (draftUser || user) ? <>{children}</> : <Navigate to="/role" replace />;
+}
+
+function RequireUser({ children }: { children: React.ReactNode }) {
+  const { user, draftUser } = useApp();
+  return (user || draftUser) ? <>{children}</> : <Navigate to="/" replace />;
 }
 
 export default function App() {
@@ -81,6 +93,62 @@ export default function App() {
         }
       />
       <Route path="/contact" element={<ContactCompose />} />
+      <Route
+        path="/user/home"
+        element={
+          <RequireUser>
+            <UserHome />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/role"
+        element={
+          <RequireUser>
+            <UserRoleSelect />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/status"
+        element={
+          <RequireUser>
+            <UserStatusSelect />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/signal"
+        element={
+          <RequireUser>
+            <UserSignalSelect />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/editstatus"
+        element={
+          <RequireUser>
+            <EditStatus />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/editsignal"
+        element={
+          <RequireUser>
+            <EditSignal />
+          </RequireUser>
+        }
+      />
+      <Route
+        path="/user/final"
+        element={
+          <RequireUser>
+            <UserFinalize />
+          </RequireUser>
+        }
+      />
 
       {/* 兜底重定向 */}
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -57,6 +57,8 @@ export default function NearbyTables() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmErr, setConfirmErr] = useState("");
+  const [confirmMode, setConfirmMode] = useState<"admin" | "editFlow" | null>(null);
+  const [confirmInput, setConfirmInput] = useState("");
 
   async function fetchNearbyTables() {
     try {
@@ -161,8 +163,12 @@ export default function NearbyTables() {
       setUser({ id: myId, name }); setMeDetail((d) => (d ? { ...d, name } : d));
     } catch (e: any) { setProfileErr(e?.message ?? "Rename failed"); }
   }
-  function actionChangeTable() { setProfileOpen(false); nav("/table"); }
-  function requestSignOut() { setConfirmErr(""); setConfirmOpen(true); }
+  function requestSignOut() {
+    setConfirmErr("");
+    setConfirmInput("");
+    setConfirmMode("admin");
+    setConfirmOpen(true);
+  }
   async function actuallySignOut() {
     if (!myId) return;
     try {
@@ -177,8 +183,108 @@ export default function NearbyTables() {
     finally { setConfirmBusy(false); }
     try { setUser(undefined as any); } catch {}
     try { setDraftUser?.(undefined); } catch {}
-    setProfileOpen(false); setConfirmOpen(false); nav("/role", { replace: true });
+    setProfileOpen(false); setConfirmOpen(false); setConfirmMode(null); setConfirmInput(""); nav("/role", { replace: true });
   }
+  function requestStartEditFlow() {
+    setConfirmErr("");
+    setConfirmInput("");
+    setConfirmMode("editFlow");
+    setConfirmOpen(true);
+  }
+
+  async function startEditFlow() {
+    const detail = meDetail;
+    if (!detail) {
+      const message = "Profile data not loaded yet. Please try again.";
+      setProfileErr(message);
+      setConfirmErr(message);
+      return;
+    }
+
+    const nextState = detailToEditState(detail);
+
+    try {
+      setProfileLoading(true);
+      setProfileErr("");
+      setConfirmBusy(true);
+      setConfirmErr("");
+      const res = await fetch(`${API}/roles/${encodeURIComponent(detail.id)}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        const j = await res.json().catch(() => ({}));
+        const r = j?.error ? ` - ${j.error}` : "";
+        throw new Error(`HTTP ${res.status}${r}`);
+      }
+    } catch (e: any) {
+      const message = e?.message ?? "Failed to start edit flow. Please try again.";
+      setProfileErr(message);
+      setConfirmErr(message);
+      setProfileLoading(false);
+      setConfirmBusy(false);
+      return;
+    }
+
+    try { setDraftUser?.({ id: detail.id, name: detail.name, avatar: detail.avatar }); } catch {}
+    try { setUser(undefined as any); } catch {}
+
+    setProfileLoading(false);
+    setConfirmBusy(false);
+    setConfirmOpen(false);
+    setConfirmMode(null);
+    setConfirmInput("");
+    setProfileOpen(false);
+    nav("/user/home", { state: nextState });
+  }
+
+  function startStatusEdit() {
+    const detail = meDetail;
+    if (!detail) {
+      setProfileErr("Profile data not loaded yet. Please try again.");
+      return;
+    }
+    const nextState = detailToEditState(detail);
+    setProfileErr("");
+    setProfileOpen(false);
+    nav("/user/editstatus", { state: nextState });
+  }
+
+  function startSignalEdit() {
+    const detail = meDetail;
+    if (!detail) {
+      setProfileErr("Profile data not loaded yet. Please try again.");
+      return;
+    }
+    const nextState = detailToEditState(detail);
+    setProfileErr("");
+    setProfileOpen(false);
+    nav("/user/editsignal", { state: nextState });
+  }
+
+  let confirmTitle = "Leaving?";
+  let confirmDesc = "You leave the table. Welcome next time.";
+  let confirmConfirmText = "Remove";
+  let confirmInputLabel: string | undefined;
+  let confirmInputPlaceholder: string | undefined;
+  let confirmInputType: "text" | "password" | undefined;
+
+  switch (confirmMode) {
+    case "admin":
+      confirmTitle = "Admin delete";
+      confirmDesc = "Admin delete will immediately remove this role and release the seat. Please enter the admin password to continue.";
+      confirmConfirmText = "Delete";
+      confirmInputLabel = "Please enter admin password";
+      confirmInputPlaceholder = "Admin password";
+      confirmInputType = "password";
+      break;
+    case "editFlow":
+      confirmTitle = "Leave table?";
+      confirmDesc = "You will free your seat and remove this role. Welcome next time.";
+      confirmConfirmText = "Continue";
+      break;
+    default:
+      break;
+  }
+
+  const confirmHandler = confirmMode === "editFlow" ? startEditFlow : actuallySignOut;
 
   return (
     <main className="relative min-h-svh text-white overflow-hidden flex flex-col
@@ -238,15 +344,33 @@ export default function NearbyTables() {
       {profileOpen && (
         <ProfileModal onClose={() => setProfileOpen(false)} loading={profileLoading}
                       error={profileErr} detail={meDetail}
-                      onRename={actionRename} onChangeTable={actionChangeTable} onSignOut={requestSignOut}/>
+                      onRename={actionRename} onAdmin={requestSignOut} onStartEditFlow={requestStartEditFlow}
+                      onEditStatus={startStatusEdit} onEditSignal={startSignalEdit}/>
       )}
 
-      {/* 退出确认 */}
-      {confirmOpen && (
-        <ConfirmDialog title="Sign out?"
-          desc="You will free your seat and remove this role. This cannot be undone."
-          confirmText="Sign out" onCancel={() => setConfirmOpen(false)}
-          onConfirm={actuallySignOut} busy={confirmBusy} error={confirmErr}/>
+      {/* Confirm modal */}
+      {confirmOpen && confirmMode && (
+        <ConfirmDialog
+          title={confirmTitle}
+          desc={confirmDesc}
+          confirmText={confirmConfirmText}
+          cancelText="Cancel"
+          onCancel={() => {
+            if (confirmBusy) return;
+            setConfirmOpen(false);
+            setConfirmMode(null);
+            setConfirmInput("");
+            setConfirmErr("");
+          }}
+          onConfirm={confirmHandler}
+          busy={confirmBusy}
+          error={confirmErr}
+          inputLabel={confirmInputLabel}
+          inputPlaceholder={confirmInputPlaceholder}
+          inputType={confirmInputType}
+          inputValue={confirmInput}
+          onInputChange={setConfirmInput}
+        />
       )}
     </main>
   );
@@ -267,6 +391,16 @@ function ensureAvatar(s: string): string {
   const v = (s ?? "").trim();
   if (!v) return "/avatars/white-smile.png";
   return v.startsWith("/") || v.startsWith("http") ? v : `/avatars/${v}`;
+}
+
+function detailToEditState(detail: MyRoleDetail) {
+  return {
+    tableId: detail.tableId ? String(detail.tableId) : undefined,
+    seatId: typeof detail.seatId === "number" ? String(detail.seatId) : detail.seatId,
+    name: detail.name,
+    avatarSrc: detail.avatar,
+    signals: detail.signals ?? [],
+  };
 }
 
 /* ---------------- components ---------------- */
@@ -463,15 +597,17 @@ function SeatAvatar({
 /* ---------------- Profile Modal ---------------- */
 
 function ProfileModal({
-  onClose, loading, error, detail, onRename, onChangeTable, onSignOut,
+  onClose, loading, error, detail, onRename, onAdmin, onStartEditFlow, onEditStatus, onEditSignal,
 }: {
   onClose: () => void;
   loading: boolean;
   error: string;
   detail: MyRoleDetail | null;
   onRename: (newName: string) => void | Promise<void>;
-  onChangeTable: () => void;
-  onSignOut: () => void;
+  onAdmin: () => void;
+  onStartEditFlow: () => void;
+  onEditStatus: () => void;
+  onEditSignal: () => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [nameInput, setNameInput] = useState(detail?.name ?? "");
@@ -493,9 +629,23 @@ function ProfileModal({
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm grid place-items-center p-4"
          onMouseDown={onOverlay} role="dialog" aria-modal="true" aria-labelledby="profile-title">
       <div className="w-full max-w-lg rounded-2xl border border-white/20 bg-white/10 backdrop-blur-md p-5 shadow-[0_10px_40px_rgba(0,0,0,.45)]">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-start justify-between gap-3 mb-3">
           <h2 id="profile-title" className="font-display text-2xl">My profile</h2>
-          <button onClick={onClose} className="rounded-md px-2 py-1 border border-white/25 bg-white/10 hover:bg-white/15" aria-label="Close">✕</button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onAdmin}
+              className="rounded-md px-3 py-1.5 border border-white/25 bg-white/10 hover:bg-white/15"
+            >
+              Admin
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-md px-2 py-1 border border-white/25 bg-white/10 hover:bg-white/15"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         {loading ? <div className="opacity-85">Loading…</div>
@@ -537,13 +687,34 @@ function ProfileModal({
               </div>
             )}
 
-            <div className="grid gap-2 mt-2">
-              {!isEditing && (
-                <button onClick={() => setIsEditing(true)} className="rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15">Edit name</button>
-              )}
-              <button onClick={onChangeTable} className="rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15">Change information</button>
-              <button onClick={onSignOut} className="rounded-lg py-2 border border-red-300/50 bg-red-300/10 hover:bg-red-300/20 text-red-100">Sign out</button>
-            </div>
+            {!isEditing && (
+              <div className="grid gap-2 mt-2">
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15"
+                >
+                  Edit name
+                </button>
+                <button
+                  onClick={onEditStatus}
+                  className="rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15"
+                >
+                  Edit avatar
+                </button>
+                <button
+                  onClick={onEditSignal}
+                  className="rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15"
+                >
+                  Edit signals
+                </button>
+                <button
+                  onClick={onStartEditFlow}
+                  className="rounded-lg py-2 border border-red-400/70 bg-red-500/90 hover:bg-red-600 text-white shadow-[0_10px_24px_rgba(0,0,0,.35)] transition"
+                >
+                  Leave table
+                </button>
+              </div>
+            )}
           </div>
         ) : <div className="opacity-85">No profile loaded.</div>}
       </div>
@@ -554,8 +725,19 @@ function ProfileModal({
 /* ---------------- Confirm Dialog ---------------- */
 
 function ConfirmDialog({
-  title, desc, confirmText = "OK", cancelText = "Cancel",
-  onConfirm, onCancel, busy, error,
+  title,
+  desc,
+  confirmText = "OK",
+  cancelText = "Cancel",
+  onConfirm,
+  onCancel,
+  busy,
+  error,
+  inputLabel,
+  inputPlaceholder,
+  inputType = "text",
+  inputValue,
+  onInputChange,
 }: {
   title: string;
   desc?: string;
@@ -565,21 +747,79 @@ function ConfirmDialog({
   onCancel: () => void;
   busy?: boolean;
   error?: string;
+  inputLabel?: string;
+  inputPlaceholder?: string;
+  inputType?: "text" | "password";
+  inputValue?: string;
+  onInputChange?: (value: string) => void;
 }) {
-  function onOverlay(e: React.MouseEvent) { if (e.target === e.currentTarget) onCancel(); }
+  const expectsInput = !!inputLabel;
+  const trimmedInput = (inputValue ?? "").trim();
+  const inputValid = !expectsInput || trimmedInput.length > 0;
+  const canConfirm = !busy && inputValid;
+
+  function onOverlay(e: React.MouseEvent) {
+    if (busy) return;
+    if (e.target === e.currentTarget) onCancel();
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canConfirm) return;
+    onConfirm();
+  }
+
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm grid place-items-center p-4"
-         onMouseDown={onOverlay} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div
+      className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm grid place-items-center p-4"
+      onMouseDown={onOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+    >
       <div className="w-full max-w-md rounded-2xl border border-white/20 bg-white/10 backdrop-blur-md p-5 shadow-[0_10px_40px_rgba(0,0,0,.55)]">
-        <h3 id="confirm-title" className="font-display text-2xl mb-2">{title}</h3>
-        {desc && <p className="text-white/85 mb-3">{desc}</p>}
-        {error && <div className="mb-2 text-red-200 text-sm">Error: {error}</div>}
-        <div className="flex gap-3 justify-end">
-          <button onClick={onCancel} disabled={!!busy}
-                  className="rounded-lg px-4 py-2 border border-white/25 bg-white/10 hover:bg-white/15 disabled:opacity-50">{cancelText}</button>
-          <button onClick={onConfirm} disabled={!!busy}
-                  className="rounded-lg px-4 py-2 bg-red-500/90 hover:bg-red-600 disabled:opacity-50">{busy ? "Processing…" : confirmText}</button>
-        </div>
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <div>
+            <h3 id="confirm-title" className="font-display text-2xl mb-2">
+              {title}
+            </h3>
+            {desc && <p className="text-white/85">{desc}</p>}
+          </div>
+
+          {expectsInput && (
+            <label className="grid gap-2 text-sm text-white/80">
+              <span>{inputLabel}</span>
+              <input
+                value={inputValue ?? ""}
+                onChange={(e) => onInputChange?.(e.target.value)}
+                type={inputType}
+                placeholder={inputPlaceholder}
+                className="rounded-md bg-black/35 border border-white/25 px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-white/40"
+                autoFocus
+              />
+            </label>
+          )}
+
+          {error && <div className="text-red-200 text-sm">Error: {error}</div>}
+
+          <div className="flex gap-3 justify-end">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={!!busy}
+              className="rounded-lg px-4 py-2 border border-white/25 bg-white/10 hover:bg-white/15 disabled:opacity-50"
+            >
+              {cancelText}
+            </button>
+            <button
+              type="submit"
+              disabled={!canConfirm}
+              className="rounded-lg px-4 py-2 bg-red-500/90 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy ? "Processing…" : confirmText}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

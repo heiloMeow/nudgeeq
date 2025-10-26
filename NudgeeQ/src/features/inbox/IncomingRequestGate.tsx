@@ -1,5 +1,5 @@
 // src/features/inbox/IncomingRequestGate.tsx
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../../app/store";
 import { useEventStream, type PushMessage } from "./useEventStream";
 import { IncomingModal } from "./IncomingModal";
@@ -21,6 +21,16 @@ type AnyMsg = {
   createdAt: string;
   kind?: MsgKind;
   inReplyTo?: string;
+  fromRoleName?: string;
+  fromTableId?: string;
+  fromSeatId?: number;
+};
+
+type RoleMeta = {
+  id: string;
+  name: string;
+  tableId?: string;
+  seatId?: number;
 };
 
 export default function IncomingRequestGate() {
@@ -30,6 +40,86 @@ export default function IncomingRequestGate() {
   const [queue, setQueue] = useState<PushMessage[]>([]);
   const [sending, setSending] = useState(false);
   const { addToast, renderer: ToastRenderer } = useToasts();
+  const [roleMeta, setRoleMeta] = useState<Record<string, RoleMeta>>({});
+  const roleMetaRef = useRef<Record<string, RoleMeta>>({});
+  const roleFetchPendingRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    roleMetaRef.current = roleMeta;
+  }, [roleMeta]);
+
+  const ensureRoleMeta = useCallback(
+    (roleId: string | undefined, hint?: Partial<RoleMeta>) => {
+      const id = (roleId ?? "").trim();
+      if (!id) return;
+
+      const current = roleMetaRef.current[id];
+      let merged = current;
+
+      if (hint) {
+        const candidate: RoleMeta = {
+          id,
+          name: toRoleName(hint.name, current?.name, id),
+          tableId: toTableId(hint.tableId ?? current?.tableId),
+          seatId: toSeatId(hint.seatId ?? current?.seatId),
+        };
+        if (
+          !current ||
+          current.name !== candidate.name ||
+          current.tableId !== candidate.tableId ||
+          current.seatId !== candidate.seatId
+        ) {
+          merged = candidate;
+          setRoleMeta((prev) => ({ ...prev, [id]: candidate }));
+        }
+      }
+
+      const latest = merged ?? roleMetaRef.current[id];
+      const needsName = !latest?.name || latest.name === id;
+      const needsTable = !latest?.tableId;
+      if ((!needsName && !needsTable) || roleFetchPendingRef.current.has(id)) {
+        return;
+      }
+
+      roleFetchPendingRef.current.add(id);
+      (async () => {
+        try {
+          const res = await fetch(`${API}/roles/${encodeURIComponent(id)}`, {
+            headers: { Accept: "application/json" },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+
+          const info: RoleMeta = {
+            id,
+            name: toRoleName(data.name, latest?.name, id),
+            tableId: toTableId(
+              data.tableId ?? data.table?.id ?? data.tableID ?? latest?.tableId
+            ),
+            seatId: toSeatId(data.seatId ?? data.seat?.id ?? latest?.seatId),
+          };
+          setRoleMeta((prev) => ({ ...prev, [id]: info }));
+        } catch {
+          // keep at least a readable fallback
+          setRoleMeta((prev) => {
+            if (prev[id]) return prev;
+            return {
+              ...prev,
+              [id]: {
+                id,
+                name: toRoleName(hint?.name, undefined, id),
+                tableId: toTableId(hint?.tableId),
+                seatId: toSeatId(hint?.seatId),
+              },
+            };
+          });
+        } finally {
+          roleFetchPendingRef.current.delete(id);
+        }
+      })();
+    },
+    [setRoleMeta]
+  );
 
   /* ---------------- 实时推送 ---------------- */
   const onPush = useCallback(
@@ -37,13 +127,18 @@ export default function IncomingRequestGate() {
       if (!myRoleId || m.toRoleId !== myRoleId) return;
 
       if ((m.kind ?? "request") === "request") {
+        ensureRoleMeta(m.fromRoleId, {
+          name: m.fromRoleName,
+          tableId: toTableId(m.fromTableId),
+          seatId: toSeatId(m.fromSeatId),
+        });
         setQueue((q) => (q.some((x) => x.id === m.id) ? q : [...q, m]));
         bumpLastSeen(myRoleId, m.createdAt);
       } else {
         addToast({ text: m.text, fromRoleId: m.fromRoleId });
       }
     },
-    [myRoleId, addToast]
+    [myRoleId, addToast, ensureRoleMeta]
   );
 
   useEventStream(myRoleId, onPush);
@@ -92,7 +187,14 @@ export default function IncomingRequestGate() {
 
         if (backlog.length > 0) {
           // 转成 PushMessage 再入队（需要 dir 字段）
-          const pushes: PushMessage[] = backlog.map((m) => toPushMessage(m, myRoleId));
+          const pushes: PushMessage[] = backlog.map((m) => {
+            ensureRoleMeta(m.fromRoleId, {
+              name: m.fromRoleName,
+              tableId: toTableId(m.fromTableId),
+              seatId: toSeatId(m.fromSeatId),
+            });
+            return toPushMessage(m, myRoleId);
+          });
           setQueue((q) => dedupeById<PushMessage>([...q, ...pushes]));
           bumpLastSeen(myRoleId, backlog[backlog.length - 1].createdAt);
         }
@@ -100,7 +202,7 @@ export default function IncomingRequestGate() {
         // 静默失败：最多只是登录后不弹历史
       }
     })();
-  }, [myRoleId]);
+  }, [myRoleId, ensureRoleMeta]);
 
   /* ---------------- 快捷回复 ---------------- */
   async function reply(text: string, inReplyTo: string, toRoleId: string, createdAt?: string) {
@@ -133,6 +235,20 @@ export default function IncomingRequestGate() {
   }
 
   const cur = queue[0] ?? null;
+  const senderMeta = cur ? roleMeta[cur.fromRoleId] : undefined;
+  const senderName =
+    (senderMeta?.name && senderMeta.name.trim()) ||
+    (typeof cur?.fromRoleName === "string" && cur.fromRoleName.trim()
+      ? cur.fromRoleName.trim()
+      : undefined) ||
+    (cur?.fromRoleId ?? "");
+  const locationLabel = senderMeta?.tableId
+    ? `Table ${senderMeta.tableId}${
+        senderMeta.seatId && Number.isFinite(senderMeta.seatId) ? ` · Seat ${senderMeta.seatId}` : ""
+      }`
+    : undefined;
+  const fallbackTableId = cur ? toTableId(cur.fromTableId) : undefined;
+  const fallbackSeatId = cur ? toSeatId(cur.fromSeatId) : undefined;
 
   return (
     <>
@@ -143,10 +259,15 @@ export default function IncomingRequestGate() {
             id: cur.id,
             text: cur.text,
             createdAt: cur.createdAt,
-            from: { id: cur.fromRoleId, name: "" },
+            from: {
+              id: cur.fromRoleId,
+              name: senderName,
+              tableId: senderMeta?.tableId ?? fallbackTableId,
+              seatId: senderMeta?.seatId ?? fallbackSeatId,
+            },
           }
         }
-        tableLabel={"Request"}
+        tableLabel={locationLabel ?? "New Request"}
         onSorry={() => cur && reply(REPLY_SORRY, cur.id, cur.fromRoleId, cur.createdAt)}
         onSure={() => cur && reply(REPLY_SURE, cur.id, cur.fromRoleId, cur.createdAt)}
         onIgnore={() => {
@@ -172,6 +293,9 @@ function toPushMessage(m: AnyMsg, me: string): PushMessage {
     kind: (m.kind ?? "request") as "request" | "response",
     inReplyTo: m.inReplyTo,
     dir: m.fromRoleId === me ? "out" : "in",
+    fromRoleName: m.fromRoleName,
+    fromTableId: m.fromTableId,
+    fromSeatId: m.fromSeatId,
   };
 }
 
@@ -193,6 +317,20 @@ function normalizeReceived(raw: any, me: string): AnyMsg {
     createdAt: String(raw.createdAt ?? new Date().toISOString()),
     kind: raw.kind === "response" ? "response" : "request",
     inReplyTo: typeof raw.inReplyTo === "string" ? raw.inReplyTo : undefined,
+    fromRoleName:
+      typeof raw.from?.name === "string" && raw.from.name.trim()
+        ? raw.from.name
+        : typeof raw.fromName === "string" && raw.fromName.trim()
+        ? raw.fromName
+        : undefined,
+    fromTableId: toTableId(
+      raw.from?.tableId ??
+        raw.tableId ??
+        raw.from?.table?.id ??
+        raw.from?.tableID ??
+        raw.table?.id
+    ),
+    fromSeatId: toSeatId(raw.from?.seatId ?? raw.seatId ?? raw.from?.seat?.id ?? raw.seat?.id),
   };
 }
 
@@ -207,6 +345,39 @@ function normalizeSent(raw: any, me: string): AnyMsg {
     kind: raw.kind === "response" ? "response" : "request",
     inReplyTo: typeof raw.inReplyTo === "string" ? raw.inReplyTo : undefined,
   };
+}
+
+function toRoleName(hint: unknown, existing: string | undefined, fallback: string): string {
+  if (typeof hint === "string") {
+    const trimmed = hint.trim();
+    if (trimmed) return trimmed;
+  }
+  if (typeof existing === "string") {
+    const trimmed = existing.trim();
+    if (trimmed) return trimmed;
+  }
+  return fallback;
+}
+
+function toTableId(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function toSeatId(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      const n = Number(trimmed);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return undefined;
 }
 
 function toMs(s: string): number {

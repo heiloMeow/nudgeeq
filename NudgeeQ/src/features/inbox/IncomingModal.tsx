@@ -14,6 +14,13 @@ export function IncomingModal({
 }) {
   if (!open || !item) return null;
 
+  const displayName = item.from?.name?.trim() || item.from?.id || "Unknown sender";
+  const seatDisplay =
+    typeof item.from?.seatId === "number" && Number.isFinite(item.from.seatId)
+      ? ` · Seat ${item.from.seatId}`
+      : "";
+  const location = item.from?.tableId ? `Table ${item.from.tableId}${seatDisplay}` : undefined;
+
   return (
     <div
       className="fixed inset-0 z-[100] grid place-items-center bg-black/50 backdrop-blur-sm p-4"
@@ -25,6 +32,10 @@ export function IncomingModal({
         <div className="px-8 pt-8 text-center">
           <div id="incoming-title" className="font-display text-[clamp(20px,3.2vw,28px)] text-brand-700">
             {tableLabel ?? "New Request"}
+          </div>
+          <div className="mt-2 text-sm text-[#4f3d61]">
+            <span className="font-semibold text-[#2d1d3a]">{displayName}</span>
+            {location && <span className="ml-2 opacity-80">{location}</span>}
           </div>
           <div className="mt-6 mb-2 font-display text-[clamp(22px,4.2vw,34px)] leading-snug">
             {item.text}

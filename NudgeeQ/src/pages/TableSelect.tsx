@@ -1,4 +1,4 @@
-// src/pages/TableSelect.tsx
+﻿// src/pages/TableSelect.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -17,11 +17,11 @@ export default function TableSelect() {
     try {
       setErr("");
       setLoading(true);
-      // 这里用 limit=60 拿一批；后端无 near 参数时会按默认顺序返回前 N 个
+      // 杩欓噷鐢?limit=60 鎷夸竴鎵癸紱鍚庣鏃?near 鍙傛暟鏃朵細鎸夐粯璁ら『搴忚繑鍥炲墠 N 涓?
       const res = await fetch(`${API_BASE}/tables?limit=60`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as Array<{ id: string | number }>;
-      // 只要 id；后续选座再按 /tables/:id 拿占用详情
+      // 鍙 id锛涘悗缁€夊骇鍐嶆寜 /tables/:id 鎷垮崰鐢ㄨ鎯?
       const list = data.map(d => ({ id: d.id }));
       setTables(list);
     } catch (e: any) {
@@ -37,7 +37,7 @@ export default function TableSelect() {
 
   const goNext = () => {
     if (!picked) return;
-    nav("/seat", { state: { tableId: picked } }); // 传给 Step 2
+    nav("/seat", { state: { tableId: picked } }); // 浼犵粰 Step 2
   };
 
   return (
@@ -47,33 +47,33 @@ export default function TableSelect() {
         bg-[radial-gradient(62%_70%_at_60%_0%,theme(colors.brand.300/.95),rgba(20,16,24,.92))]
       "
     >
-      {/* 背景细纹 */}
+      {/* 鑳屾櫙缁嗙汗 */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[.12]
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
       />
 
-      {/* 顶部品牌 */}
+      {/* 椤堕儴鍝佺墝 */}
       <header className="px-7 py-6 relative z-10 flex items-center gap-3">
-        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
+        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ 路 Admin</span>
         <button
           onClick={() => nav(-1)}
           className="ml-auto rounded-full border border-white/30 bg-white/10 backdrop-blur px-3 py-1.5 text-sm hover:bg-white/15"
           aria-label="Back"
         >
-          ← Back
+          鈫?Back
         </button>
       </header>
 
-      {/* 标题 */}
+      {/* 鏍囬 */}
       <section className="px-4 relative z-10">
         <h2 className="text-center font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 1</h2>
         <h1 className="text-center font-display text-[clamp(28px,5vw,48px)]">Select Your Table</h1>
         <p className="text-center text-white/80 mt-1">Pick a table to continue to seat selection.</p>
       </section>
 
-      {/* 桌子卡片 */}
+      {/* 妗屽瓙鍗＄墖 */}
       <section className="grow grid place-items-center px-4 pb-24 relative z-10">
         <div
           className="
@@ -85,13 +85,13 @@ export default function TableSelect() {
           role="group"
           aria-label="Tables"
         >
-          {/* 十字分割线（装饰） */}
+          {/* 鍗佸瓧鍒嗗壊绾匡紙瑁呴グ锛?*/}
           <div className="absolute inset-8 pointer-events-none">
             <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/20" />
             <div className="absolute top-1/2 left-0 right-0 h-px bg-white/20" />
           </div>
 
-          {/* 内容区 */}
+          {/* 鍐呭鍖?*/}
           {loading ? (
             <DotSkeleton />
           ) : err ? (
@@ -128,16 +128,16 @@ export default function TableSelect() {
         </div>
       </section>
 
-      {/* 下方按钮区 */}
-      <section className="px-4 pb-4 grid place-items-center relative z-10">
+      <section className="px-4 pb-10 -mt-12 grid place-items-center relative z-10">
         <button
           onClick={goNext}
           disabled={!picked}
-          className="min-w-[180px] rounded-lg py-2 bg-brand-500 hover:bg-brand-700 disabled:opacity-50"
+          className="min-w-[180px] rounded-lg px-6 py-2 border border-white/25 bg-white/12 backdrop-blur-xl shadow-[0_18px_40px_rgba(0,0,0,.35)] transition hover:bg-white/18 disabled:opacity-40 disabled:hover:bg-white/12 disabled:cursor-not-allowed"
         >
           Continue
         </button>
       </section>
+
     </main>
   );
 }
@@ -176,7 +176,7 @@ function TableDot({
   );
 }
 
-/* Skeleton 占位（加载时的虚影圆点） */
+/* Skeleton 鍗犱綅锛堝姞杞芥椂鐨勮櫄褰卞渾鐐癸級 */
 function DotSkeleton() {
   const ph = new Array(8).fill(0);
   return (

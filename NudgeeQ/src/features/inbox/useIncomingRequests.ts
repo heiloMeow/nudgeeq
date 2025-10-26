@@ -7,7 +7,7 @@ export type IncomingItem = {
   id: string;
   text: string;
   createdAt: string; // ISO
-  from: { id: string; name: string };
+  from: { id: string; name: string; tableId?: string; seatId?: number };
 };
 
 type Options = {

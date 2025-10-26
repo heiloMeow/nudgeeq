@@ -10,6 +10,10 @@ export type PushMessage = {
   inReplyTo?: string;
   createdAt: string;
   dir: "in" | "out"; // server-attached direction
+  // Optional metadata (if server includes them)
+  fromRoleName?: string;
+  fromTableId?: string | number;
+  fromSeatId?: number | string;
 };
 
 // Resolve SSE base URL:

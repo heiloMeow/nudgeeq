@@ -1,27 +1,30 @@
-// src/pages/SignalSelect.tsx
-import { useMemo, useRef, useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+// src/pages/UserSignalSelect.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useApp } from "../app/store";
+import { fetchMyRoleDetail } from "./userFlowApi";
+import type { UserEditState } from "./userFlowTypes";
 
 type SignalSide = "left" | "right";
 type SignalItem = { id: string; text: string; x: number; y: number; side: SignalSide };
 
-export default function SignalSelect() {
+export default function UserSignalSelect() {
   const nav = useNavigate();
+  const { user, draftUser } = useApp();
+  const { state } = useLocation() as { state?: UserEditState };
 
-  const { state } = useLocation() as {
-    state?: { tableId?: string; seatId?: string; avatarSrc?: string };
-  };
+  const [base, setBase] = useState<UserEditState>(state ?? {});
+  const stateSignals = state?.signals;
+  const baseSignals = base.signals;
+  const stateTableId = state?.tableId;
+  const stateSeatId = state?.seatId;
+  const baseTableId = base.tableId;
+  const baseSeatId = base.seatId;
+  const [signals, setSignals] = useState<SignalItem[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [draftText, setDraftText] = useState("");
+  const stageRef = useRef<HTMLDivElement>(null);
 
-  const tableId = state?.tableId ?? null;
-  const seatId = state?.seatId ?? null;
-  const avatarSrc = state?.avatarSrc ?? "/avatars/white-smile.png";
-
-  // 没有上一步信息就退回
-  useEffect(() => {
-    if (!tableId || !seatId) nav("/seat", { replace: true });
-  }, [tableId, seatId, nav]);
-
-  // 预置 signal（按三列分组决定默认落点）
   const presets = useMemo(
     () => ({
       left: [
@@ -37,27 +40,86 @@ export default function SignalSelect() {
     []
   );
 
-  const [signals, setSignals] = useState<SignalItem[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [draftText, setDraftText] = useState("");
+  useEffect(() => {
+    if (!user && !draftUser) {
+      nav("/", { replace: true });
+      return;
+    }
+    if (stateTableId && stateSeatId) return;
+    if (!user?.id) return;
 
-  const stageRef = useRef<HTMLDivElement>(null);
+    let active = true;
+    (async () => {
+      try {
+        const info = await fetchMyRoleDetail(user.id);
+        if (!active) return;
+        setBase((prev) => ({
+          ...prev,
+          tableId: prev.tableId ?? info.tableId,
+          seatId: prev.seatId ?? info.seatId,
+          name: prev.name ?? info.name,
+          avatarSrc: prev.avatarSrc ?? info.avatar,
+          signals: prev.signals ?? info.signals,
+        }));
+        const hasExistingSignals =
+          (stateSignals?.length ?? 0) > 0 || signals.length > 0 || (baseSignals?.length ?? 0) > 0;
+        if (!hasExistingSignals && info.signals.length > 0) {
+          seedSignals(info.signals);
+        }
+      } catch {
+        // ignore; subsequent steps will surface missing context
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    user,
+    draftUser,
+    nav,
+    stateSignals,
+    signals.length,
+    baseSignals,
+    stateTableId,
+    stateSeatId,
+    baseTableId,
+    baseSeatId,
+  ]);
 
-  // 添加一个 signal（按分组决定默认 side 与初始位置）
+  useEffect(() => {
+    const list = stateSignals ?? baseSignals;
+    if (list && list.length > 0 && signals.length === 0) {
+      seedSignals(list);
+    }
+  }, [stateSignals, baseSignals, signals.length]);
+
+  function seedSignals(list: string[]) {
+    const rect = stageRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.width / 2 : 480;
+    const cy = rect ? rect.height / 2 : 260;
+    setSignals((existing) => {
+      if (existing.length > 0) return existing;
+      return list.map((text, index) => {
+        const side: SignalSide = index % 2 === 0 ? "left" : "right";
+        const x = side === "left" ? cx - 220 : cx + 220;
+        const y = cy + ((index % 3) - 1) * 60;
+        return { id: crypto.randomUUID(), text, x, y, side };
+      });
+    });
+  }
+
   function addSignal(text: string, from: "left" | "center" | "right" = "center") {
     const rect = stageRef.current?.getBoundingClientRect();
     const id = crypto.randomUUID();
     const cx = rect ? rect.width / 2 : 480;
     const cy = rect ? rect.height / 2 : 260;
-
     const side: SignalSide =
       from === "left" ? "left" : from === "right" ? "right" : signals.length % 2 ? "right" : "left";
-    const x = side === "left" ? cx - 260 : cx + 260; // 默认落在头像左右两侧
-    const y = cy + (Math.random() * 120 - 60); // 上下随机一点
+    const x = side === "left" ? cx - 260 : cx + 260;
+    const y = cy + (Math.random() * 120 - 60);
     setSignals((s) => [...s, { id, text, x, y, side }]);
   }
 
-  // 拖拽（Pointer Events + 键盘微调）
   function bindDrag(sig: SignalItem) {
     return {
       onPointerDown: (e: React.PointerEvent) => {
@@ -67,16 +129,15 @@ export default function SignalSelect() {
         const startY = e.clientY;
         const start = { x: sig.x, y: sig.y };
         const rect = stageRef.current!.getBoundingClientRect();
-
         const onMove = (ev: PointerEvent) => {
           const nx = start.x + (ev.clientX - startX);
           const ny = start.y + (ev.clientY - startY);
-          const pad = 20,
-            w = rect.width,
-            h = rect.height;
+          const pad = 20;
+          const w = rect.width;
+          const h = rect.height;
           sig.x = Math.max(pad, Math.min(w - pad, nx));
           sig.y = Math.max(pad, Math.min(h - pad, ny));
-          setSignals((s) => [...s]); // 触发刷新
+          setSignals((s) => [...s]);
         };
         const onUp = () => {
           window.removeEventListener("pointermove", onMove);
@@ -111,7 +172,9 @@ export default function SignalSelect() {
   }
 
   const done = () => {
-    if (!tableId || !seatId) return;
+    if (!base.tableId || !base.seatId) {
+      return;
+    }
     const rect = stageRef.current?.getBoundingClientRect();
     const w = rect?.width ?? 1;
     const h = rect?.height ?? 1;
@@ -119,19 +182,21 @@ export default function SignalSelect() {
     const normalized = signals.map((s) => ({
       id: s.id,
       text: s.text,
-      nx: +(s.x / w).toFixed(4), // 0~1
+      nx: +(s.x / w).toFixed(4),
       ny: +(s.y / h).toFixed(4),
     }));
 
-    nav("/final", {
+    nav("/user/final", {
       state: {
-        tableId,
-        seatId,
-        avatarSrc,
-        signals: normalized, // Finalize.tsx 里仅提取 text[] 存后端
+        ...base,
+        name: base.name,
+        avatarSrc: base.avatarSrc,
+        signals: normalized,
       },
     });
   };
+
+  const currentAvatar = base.avatarSrc ?? "/avatars/white-smile.png";
 
   return (
     <main
@@ -141,23 +206,20 @@ export default function SignalSelect() {
         flex flex-col
       "
     >
-      {/* 背景细纹 */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[.10]
                    bg-[repeating-linear-gradient(125deg,rgba(255,255,255,.4)_0_2px,transparent_2px_6px)]"
       />
 
-      {/* 顶部：品牌 + 标题（删除了原来的 Done 按钮） */}
       <header className="px-7 py-6 flex items-center justify-between gap-3 relative z-10">
-        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ · Admin</span>
+        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
 
         <div className="text-center grow">
-          <div className="font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 4</div>
+          <div className="font-display text-[clamp(22px,3.8vw,34px)] opacity-95">Step 2</div>
           <div className="font-display text-[clamp(20px,3.5vw,28px)]">Drag &amp; Show Your Signal</div>
         </div>
 
-        {/* 右上角 Continue（调用原来的 done()） */}
         <button
           onClick={done}
           aria-label="Continue"
@@ -173,28 +235,24 @@ export default function SignalSelect() {
         </button>
       </header>
 
-      {/* 舞台：头像 + 可拖拽气泡 */}
       <section className="grow grid place-items-center px-4">
         <div
           ref={stageRef}
           className="relative z-10 w-full max-w-4xl h-[380px] md:h-[420px] rounded-2xl overflow-visible"
-          style={{ touchAction: "none" }} // 禁止浏览器把手势当滚动/缩放
+          style={{ touchAction: "none" }}
           role="region"
           aria-label="Signal stage"
         >
-          {/* 已添加的气泡 */}
           {signals.map((s) => (
             <SignalBubble
               key={s.id}
               text={s.text}
-              _side={s.side}
-              style={{ left: s.x, top: s.y, transform: "translate(-50%,-50%)" }}
+              style={{ left: s.x, top: s.y, transform: "translate(-50%, -50%)" }}
               onRemove={() => removeSignal(s.id)}
               {...bindDrag(s)}
             />
           ))}
 
-          {/* 中心头像 + 添加按钮 */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
             <div
               className="
@@ -206,7 +264,7 @@ export default function SignalSelect() {
                 backdrop-blur-md
               "
             >
-              <SafeImg src={avatarSrc} alt="Selected avatar" />
+              <SafeImg src={currentAvatar} alt="Selected avatar" />
             </div>
 
             <div className="mt-4 grid place-items-center pointer-events-auto">
@@ -245,14 +303,12 @@ export default function SignalSelect() {
         </div>
       </section>
 
-      {/* 底部预制 */}
-      <section className="px-6 pb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+      <section className="px-6 pb-8 grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
         <PresetColumn title=" " colorDot="bg-pink-300" items={presets.left} onPick={(t) => addSignal(t, "left")} />
         <PresetColumn title=" " colorDot="bg-violet-300" items={presets.center} onPick={(t) => addSignal(t, "center")} />
         <PresetColumn title=" " colorDot="bg-rose-300" items={presets.right} onPick={(t) => addSignal(t, "right")} />
       </section>
 
-      {/* 右下角返回 —— 统一风格与位置 */}
       <button
         onClick={() => nav(-1)}
         className="
@@ -268,8 +324,6 @@ export default function SignalSelect() {
   );
 }
 
-/* ---------- 子组件们 ---------- */
-
 function SignalBubble({
   text,
   style,
@@ -278,7 +332,6 @@ function SignalBubble({
   onKeyDown,
 }: {
   text: string;
-  _side: "left" | "right";
   style: React.CSSProperties;
   onRemove: () => void;
   onPointerDown: (e: React.PointerEvent) => void;
@@ -302,8 +355,6 @@ function SignalBubble({
       ].join(" ")}
     >
       <div className="pr-7 leading-snug tracking-wide">{text}</div>
-
-      {/* 删除按钮 */}
       <button
         onClick={onRemove}
         className={[
@@ -350,7 +401,6 @@ function PresetColumn({
   );
 }
 
-/** 安全图片：加载失败时用占位兜底 */
 function SafeImg({ src, alt }: { src: string; alt?: string }) {
   const [ok, setOk] = useState(true);
   useEffect(() => {

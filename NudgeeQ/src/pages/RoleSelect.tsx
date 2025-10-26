@@ -60,7 +60,7 @@ export default function RoleSelect() {
     >
       {/* Brand */}
       <header className="px-7 py-6 relative z-10">
-        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ</span>
+        <span className="tracking-wider font-semibold text-lg/none opacity-90">NudgeeQ · Admin</span>
       </header>
 
       {/* Card */}
@@ -71,19 +71,19 @@ export default function RoleSelect() {
             p-6 shadow-[0_10px_40px_rgba(0,0,0,.35)]
           "
         >
-          <h1 className="font-display text-3xl mb-3">Enter your nickname</h1>
+          <h1 className="font-display text-3xl mb-3">Enter initial role name</h1>
 
           <form onSubmit={submit} className="grid gap-3">
             <input
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Enter your nickname"
+              placeholder="Enter initial role name"
               className="
                 w-full rounded-lg bg-black/20 border border-white/20 px-3 py-2
                 focus:outline-none focus:ring-2 focus:ring-white/50
               "
-              aria-label="Enter your nickname"
+              aria-label="Enter initial role name"
             />
             <button
               type="submit"
@@ -123,7 +123,7 @@ function ExistingRolesButton({ onPick }: { onPick: (r: RoleSummary) => void }) {
         onClick={() => setOpen(true)}
         className="w-full rounded-lg py-2 border border-white/25 bg-white/10 hover:bg-white/15"
       >
-        Or choose an existing role
+        Or admin an existing role
       </button>
       {open && <RolePicker onClose={() => setOpen(false)} onPick={onPick} />}
     </>
@@ -199,7 +199,7 @@ function RolePicker({
       >
         <div className="flex items-center justify-between mb-3">
           <h2 id="role-picker-title" className="font-display text-2xl">
-            Choose an existing role
+            Admin an existing role
           </h2>
           <button
             onClick={onClose}
